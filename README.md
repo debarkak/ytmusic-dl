@@ -77,6 +77,10 @@ defaults to opus if you just hit enter or type something weird
 
 defaults to album folder
 
+### what's next
+
+still working on the bash version, gonna add more features and improvements to it first before anything else. once it's solid enough i'll port it to python so it works on windows and other platforms too
+
 ### license
 
 [GPL-3.0](LICENSE)
