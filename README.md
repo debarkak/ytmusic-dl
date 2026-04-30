@@ -58,21 +58,21 @@ brew install yt-dlp ffmpeg
 
 ### format options
 
-| # | format | notes |
-|---|--------|-------|
-| 1 | opus   | native yt audio, no re-encoding (just use this) |
-| 2 | m4a    | AAC, decent compat |
-| 3 | mp3    | works on everything, tiny quality hit |
-| 4 | flac   | lossless wrapper around a lossy source lol |
-| 5 | wav    | uncompressed, will eat your storage |
+| # | format | notes                                            |
+|---|--------|--------------------------------------------------|
+| 1 | opus   | native yt audio, no re-encoding (just use this)  |
+| 2 | m4a    | AAC, decent compat                                |
+| 3 | mp3    | works on everything, tiny quality hit              |
+| 4 | flac   | lossless wrapper around a lossy source lol         |
+| 5 | wav    | uncompressed, will eat your storage                |
 
 defaults to opus if you just hit enter or type something weird
 
 ### output modes
 
-| # | mode | what it does |
-|---|------|--------------|
-| 1 | flat | dumps everything in the current directory |
+| # | mode         | what it does                                                  |
+|---|--------------|---------------------------------------------------------------|
+| 1 | flat         | dumps everything in the current directory                     |
 | 2 | album folder | creates a folder named after the album/playlist (recommended) |
 
 defaults to album folder
