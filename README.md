@@ -1,7 +1,8 @@
 # ytmusic-dl
+
 a vibe coded downloader tool that downloads youtube music playlists/albums
 
-### how to use
+## how to use
 
 ```bash
 # clone it
@@ -23,7 +24,7 @@ you can also skip the url prompt by passing it as an argument:
 ./ytmusic-dl.sh "https://music.youtube.com/playlist?list=OLAK5uy_..."
 ```
 
-### features
+## features
 
 - converts to any format supported by yt-dlp (opus, m4a, mp3, flac, wav)
 - automatically embeds metadata (title, artist, album, etc.)
@@ -36,7 +37,7 @@ you can also skip the url prompt by passing it as an argument:
 - colored terminal output because we're not savages
 - exits cleanly on errors or ctrl+c (resets terminal colors too)
 
-### dependencies
+## dependencies
 
 you need these installed before running:
 
@@ -56,19 +57,19 @@ sudo apt install yt-dlp ffmpeg
 brew install yt-dlp ffmpeg
 ```
 
-### format options
+## format options
 
-| # | format | notes                                            |
-|---|--------|--------------------------------------------------|
-| 1 | opus   | native yt audio, no re-encoding (just use this)  |
-| 2 | m4a    | AAC, decent compat                                |
-| 3 | mp3    | works on everything, tiny quality hit              |
-| 4 | flac   | lossless wrapper around a lossy source lol         |
-| 5 | wav    | uncompressed, will eat your storage                |
+| # | format | notes                                           |
+|---|--------|-------------------------------------------------|
+| 1 | opus   | native yt audio, no re-encoding (just use this) |
+| 2 | m4a    | AAC, decent compat                              |
+| 3 | mp3    | works on everything, tiny quality hit            |
+| 4 | flac   | lossless wrapper around a lossy source lol       |
+| 5 | wav    | uncompressed, will eat your storage              |
 
 defaults to opus if you just hit enter or type something weird
 
-### output modes
+## output modes
 
 | # | mode         | what it does                                                  |
 |---|--------------|---------------------------------------------------------------|
@@ -77,10 +78,10 @@ defaults to opus if you just hit enter or type something weird
 
 defaults to album folder
 
-### what's next
+## what's next
 
 still working on the bash version, gonna add more features and improvements to it first before anything else. once it's solid enough i'll port it to python so it works on windows and other platforms too
 
-### license
+## license
 
 [GPL-3.0](LICENSE)
