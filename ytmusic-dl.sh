@@ -8,7 +8,7 @@ set -euo pipefail
 
 # reset colors on exit, ctrl+c, or error
 trap 'echo -ne "\033[0m"' EXIT
-trap 'echo -ne "\033[0m"; exit 130' INT TERM
+trap 'echo -e "\n\033[0m\033[1;31m  ✗ interrupted\033[0m"; exit 130' INT TERM
 
 # ── colors ──────────────────────────────────
 RED='\033[0;31m'
@@ -46,7 +46,9 @@ check_deps() {
         echo -e "    ${DIM}just install them (pacman/apt/brew idc)${RST}"
         exit 1
     fi
-    echo -e "  ${GRN}✓${RST} ${DIM}deps found (yt-dlp, ffmpeg)${RST}"
+    local ytdlp_ver
+    ytdlp_ver=$(yt-dlp --version 2>/dev/null || echo "?")
+    echo -e "  ${GRN}✓${RST} ${DIM}yt-dlp ${ytdlp_ver} · ffmpeg found${RST}"
 }
 
 # ── banner ───────────────────────────────────
@@ -61,12 +63,22 @@ banner() {
     echo ""
 }
 
+# ── validate URL ─────────────────────────────
+validate_url() {
+    local url="$1"
+    if [[ ! "$url" =~ ^https?://(www\.)?(music\.)?youtube\.com/ && \
+          ! "$url" =~ ^https?://youtu\.be/ ]]; then
+        echo -e "  ${YLW}!${RST} ${DIM}that doesn't look like a youtube url, trying anyway...${RST}"
+    fi
+}
+
 # ── prompt URL ───────────────────────────────
 prompt_url() {
     if [[ -n "${1:-}" ]]; then
         URL="$1"
         echo -e "  ${GRN}✓${RST} ${BLD}url${RST} ${DIM}(from arg)${RST}"
         echo -e "    ${CYN}${URL}${RST}"
+        validate_url "$URL"
         return
     fi
 
@@ -76,6 +88,7 @@ prompt_url() {
         echo -e "  ${RED}✗${RST} bro u didn't paste anything"
         exit 1
     fi
+    validate_url "$URL"
     echo -e "  ${GRN}✓${RST} ${BLD}url${RST}"
 }
 
@@ -156,11 +169,26 @@ build_format_flags() {
 run_download() {
     section "downloading"
 
-    echo -e "  ${BLD}url${RST}     ${CYN}${URL}${RST}"
-    echo -e "  ${BLD}format${RST}  ${AUDIO_FORMAT}"
-    echo -e "  ${BLD}mode${RST}    ${DIR_MODE}"
+    echo -e "  ${BLD}url${RST}        ${CYN}${URL}${RST}"
+    echo -e "  ${BLD}format${RST}     ${AUDIO_FORMAT}"
+    echo -e "  ${BLD}mode${RST}       ${DIR_MODE}"
+    echo ""
+    echo -e "  ${DIM}┌ metadata: embedded${RST}"
+    echo -e "  ${DIM}├ thumbnails: embedded (cropped to square)${RST}"
+    if [[ "$AUDIO_FORMAT" == "mp3" ]]; then
+        echo -e "  ${DIM}├ mp3 quality: VBR q0 (best)${RST}"
+        echo -e "  ${DIM}├ thumbnail format: jpg (ID3 compat)${RST}"
+    fi
+    echo -e "  ${DIM}├ track numbering: from playlist index${RST}"
+    echo -e "  ${DIM}├ skip existing: yes${RST}"
+    echo -e "  ${DIM}└ concurrent fragments: ${FRAGMENTS}${RST}"
     echo ""
 
+    local start_time
+    start_time=$(date +%s)
+
+    # run yt-dlp, catch errors without killing the script
+    set +e
     yt-dlp \
         -f bestaudio \
         --extract-audio \
@@ -175,14 +203,54 @@ run_download() {
         --no-overwrites \
         --concurrent-fragments "${FRAGMENTS}" \
         "${URL}"
+    local exit_code=$?
+    set -e
+
+    local end_time elapsed
+    end_time=$(date +%s)
+    elapsed=$(( end_time - start_time ))
+
+    # format elapsed time nicely
+    local time_str
+    if [[ $elapsed -ge 60 ]]; then
+        time_str="$(( elapsed / 60 ))m $(( elapsed % 60 ))s"
+    else
+        time_str="${elapsed}s"
+    fi
 
     echo ""
+
+    if [[ $exit_code -ne 0 ]]; then
+        hr "${RED}"
+        echo -e "  ${RED}${BLD}✗ yt-dlp failed${RST} ${DIM}(exit code ${exit_code})${RST}"
+        echo -e "  ${DIM}check the url and try again${RST}"
+        hr "${RED}"
+        exit $exit_code
+    fi
+
+    # count downloaded files
+    local file_count=0
+    if [[ "$DIR_MODE" == "album_folder" ]]; then
+        # count audio files in the most recently modified subdirectory
+        local latest_dir
+        latest_dir=$(find . -maxdepth 1 -mindepth 1 -type d -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+        if [[ -n "${latest_dir:-}" && -d "$latest_dir" ]]; then
+            file_count=$(find "$latest_dir" -maxdepth 1 -type f \( -name "*.${AUDIO_FORMAT}" \) 2>/dev/null | wc -l)
+        fi
+    else
+        file_count=$(find . -maxdepth 1 -type f -name "*.${AUDIO_FORMAT}" 2>/dev/null | wc -l)
+    fi
+
     hr "${GRN}"
     echo -e "  ${GRN}${BLD}✓ done, enjoy${RST}"
+    if [[ $file_count -gt 0 ]]; then
+        echo -e "  ${DIM}tracks:${RST} ${BLD}${file_count}${RST}"
+    fi
+    echo -e "  ${DIM}time:${RST}   ${BLD}${time_str}${RST}"
     if [[ "$DIR_MODE" == "album_folder" ]]; then
-        echo -e "  ${DIM}folder dropped in:${RST} ${BLD}$(pwd)${RST}"
+        echo -e "  ${DIM}folder:${RST} ${BLD}$(pwd)${RST}"
     else
-        echo -e "  ${DIM}files in:${RST} ${BLD}$(pwd)${RST}"
+        echo -e "  ${DIM}files:${RST}  ${BLD}$(pwd)${RST}"
     fi
     hr "${GRN}"
 }
