@@ -11,7 +11,58 @@ import signal
 import shutil
 import subprocess
 import time
+import platform
 from pathlib import Path
+
+
+# ── platform detection ──────────────────────
+IS_WINDOWS = platform.system() == "Windows"
+
+
+# ── windows setup ───────────────────────────
+def _init_windows():
+    """enable ansi colors and utf-8 on windows"""
+    if not IS_WINDOWS:
+        return
+
+    # enable VT100 escape sequences in windows terminal
+    # this makes ansi color codes work in cmd.exe and powershell
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        # STD_OUTPUT_HANDLE = -11
+        handle = kernel32.GetStdHandle(-11)
+        # ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+        mode = ctypes.c_ulong()
+        kernel32.GetConsoleMode(handle, ctypes.byref(mode))
+        kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+
+        # do the same for stderr
+        handle_err = kernel32.GetStdHandle(-12)
+        mode_err = ctypes.c_ulong()
+        kernel32.GetConsoleMode(handle_err, ctypes.byref(mode_err))
+        kernel32.SetConsoleMode(handle_err, mode_err.value | 0x0004)
+    except Exception:
+        pass
+
+    # set console output to utf-8 so box drawing chars work
+    try:
+        import ctypes
+        ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+        ctypes.windll.kernel32.SetConsoleCP(65001)
+    except Exception:
+        pass
+
+    # also set the python io encoding
+    if sys.stdout.encoding != "utf-8":
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+            sys.stderr.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+
+
+_init_windows()
 
 
 # ── colors ──────────────────────────────────
@@ -70,7 +121,10 @@ def handle_interrupt(sig, frame):
 
 
 signal.signal(signal.SIGINT, handle_interrupt)
-signal.signal(signal.SIGTERM, handle_interrupt)
+
+# SIGTERM doesn't exist on windows
+if hasattr(signal, "SIGTERM"):
+    signal.signal(signal.SIGTERM, handle_interrupt)
 
 
 # ── dependency check ────────────────────────
@@ -83,17 +137,34 @@ def check_deps():
 
     if missing:
         print(f"  {C.RED}✗{C.RST} missing deps: {C.BLD}{' '.join(missing)}{C.RST}")
-        print(f"    {C.DIM}just install them (pacman/apt/brew/choco idc){C.RST}")
+        if IS_WINDOWS:
+            print(f"    {C.DIM}install them with scoop/choco/winget{C.RST}")
+        else:
+            print(f"    {C.DIM}just install them (pacman/apt/brew idc){C.RST}")
         sys.exit(1)
 
     try:
         ytdlp_ver = subprocess.check_output(
-            ["yt-dlp", "--version"], stderr=subprocess.DEVNULL, text=True
+            ["yt-dlp", "--version"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            # hide the console window on windows
+            **(_subprocess_kwargs()),
         ).strip()
     except Exception:
         ytdlp_ver = "?"
 
     print(f"  {C.GRN}✓{C.RST} {C.DIM}yt-dlp {ytdlp_ver} · ffmpeg found{C.RST}")
+
+
+def _subprocess_kwargs():
+    """extra kwargs for subprocess calls on windows to suppress console popups"""
+    if IS_WINDOWS:
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = 0  # SW_HIDE
+        return {"startupinfo": si}
+    return {}
 
 
 # ── banner ──────────────────────────────────
@@ -182,6 +253,7 @@ def prompt_directory():
     if not choice:
         choice = "2"
 
+    # yt-dlp handles path separators internally, so / works on all platforms
     if choice == "1":
         template = "%(track_number,playlist_index)02d - %(title)s.%(ext)s"
         mode = "flat"
@@ -217,19 +289,27 @@ def count_files(audio_format, dir_mode):
     cwd = Path.cwd()
     ext = f".{audio_format}"
 
-    if dir_mode == "album_folder":
-        # find the most recently modified subdirectory
-        subdirs = [d for d in cwd.iterdir() if d.is_dir() and not d.name.startswith(".")]
-        if subdirs:
-            latest = max(subdirs, key=lambda d: d.stat().st_mtime)
-            return len([f for f in latest.iterdir() if f.is_file() and f.suffix == ext])
-    else:
-        return len([f for f in cwd.iterdir() if f.is_file() and f.suffix == ext])
+    try:
+        if dir_mode == "album_folder":
+            # find the most recently modified subdirectory
+            subdirs = [d for d in cwd.iterdir() if d.is_dir() and not d.name.startswith(".")]
+            if subdirs:
+                latest = max(subdirs, key=lambda d: d.stat().st_mtime)
+                return len([f for f in latest.iterdir() if f.is_file() and f.suffix == ext])
+        else:
+            return len([f for f in cwd.iterdir() if f.is_file() and f.suffix == ext])
+    except OSError:
+        pass
     return 0
 
 
 # ── format elapsed time ────────────────────
 def format_time(seconds):
+    if seconds >= 3600:
+        h = seconds // 3600
+        m = (seconds % 3600) // 60
+        s = seconds % 60
+        return f"{h}h {m}m {s}s"
     if seconds >= 60:
         return f"{seconds // 60}m {seconds % 60}s"
     return f"{seconds}s"
@@ -256,6 +336,8 @@ def run_download(url, audio_format, output_template, dir_mode):
     print()
 
     # build the yt-dlp command
+    # the crop filter uses single quotes which work on all platforms
+    # when passed as a single argument in a list (not shell-expanded)
     crop_filter = "crop='if(gt(ih,iw),iw,ih)':'if(gt(iw,ih),ih,iw)'"
     cmd = [
         "yt-dlp",
@@ -277,8 +359,13 @@ def run_download(url, audio_format, output_template, dir_mode):
     start_time = time.time()
 
     # run yt-dlp
-    result = subprocess.run(cmd)
-    exit_code = result.returncode
+    try:
+        result = subprocess.run(cmd)
+        exit_code = result.returncode
+    except FileNotFoundError:
+        # yt-dlp binary not found (shouldn't happen after dep check, but just in case)
+        print(f"\n  {C.RED}✗{C.RST} couldn't run yt-dlp, is it in your PATH?")
+        sys.exit(1)
 
     elapsed = int(time.time() - start_time)
     time_str = format_time(elapsed)
@@ -300,9 +387,9 @@ def run_download(url, audio_format, output_template, dir_mode):
         print(f"  {C.DIM}tracks:{C.RST} {C.BLD}{file_count}{C.RST}")
     print(f"  {C.DIM}time:{C.RST}   {C.BLD}{time_str}{C.RST}")
     if dir_mode == "album_folder":
-        print(f"  {C.DIM}folder:{C.RST} {C.BLD}{os.getcwd()}{C.RST}")
+        print(f"  {C.DIM}folder:{C.RST} {C.BLD}{Path.cwd()}{C.RST}")
     else:
-        print(f"  {C.DIM}files:{C.RST}  {C.BLD}{os.getcwd()}{C.RST}")
+        print(f"  {C.DIM}files:{C.RST}  {C.BLD}{Path.cwd()}{C.RST}")
     hr(C.GRN)
 
 
