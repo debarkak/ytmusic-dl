@@ -336,9 +336,11 @@ def run_download(url, audio_format, output_template, dir_mode):
     print()
 
     # build the yt-dlp command
-    # the crop filter uses single quotes which work on all platforms
-    # when passed as a single argument in a list (not shell-expanded)
-    crop_filter = "crop='if(gt(ih,iw),iw,ih)':'if(gt(iw,ih),ih,iw)'"
+    # crop thumbnail to square using the smaller dimension
+    # uses min() instead of if(gt()) to avoid single-quote quoting
+    # issues on windows — commas are backslash-escaped so yt-dlp
+    # doesn't split the filter string prematurely
+    crop_filter = "crop=min(iw\\,ih):min(iw\\,ih)"
     cmd = [
         "yt-dlp",
         "-f", "bestaudio",

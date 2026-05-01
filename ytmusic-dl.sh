@@ -198,7 +198,7 @@ run_download() {
         --embed-metadata \
         --embed-thumbnail \
         --convert-thumbnails "${THUMB_CONVERT}" \
-        --ppa "ThumbnailsConvertor+ffmpeg_o:-c:v ${THUMB_CODEC} -vf crop=\"'if(gt(ih,iw),iw,ih)':'if(gt(iw,ih),ih,iw)'\"" \
+        --ppa "ThumbnailsConvertor+ffmpeg_o:-c:v ${THUMB_CODEC} -vf crop=min(iw\,ih):min(iw\,ih)" \
         --parse-metadata "playlist_index:%(track_number)s" \
         --no-overwrites \
         --concurrent-fragments "${FRAGMENTS}" \
