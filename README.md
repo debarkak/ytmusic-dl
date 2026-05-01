@@ -9,10 +9,11 @@ a vibe coded downloader tool that downloads youtube music playlists/albums
 git clone https://github.com/debarkak/ytmusic-dl.git
 cd ytmusic-dl
 
-# make it executable
-chmod +x ytmusic-dl.sh
+# run it (python 3)
+python3 ytmusic-dl.py
 
-# run it
+# or the bash version if you prefer
+chmod +x ytmusic-dl.sh
 ./ytmusic-dl.sh
 ```
 
@@ -21,7 +22,7 @@ the script will walk you through everything interactively — paste the url, pic
 you can also skip the url prompt by passing it as an argument:
 
 ```bash
-./ytmusic-dl.sh "https://music.youtube.com/playlist?list=OLAK5uy_..."
+python3 ytmusic-dl.py "https://music.youtube.com/playlist?list=OLAK5uy_..."
 ```
 
 ## features
@@ -36,11 +37,13 @@ you can also skip the url prompt by passing it as an argument:
 - won't re-download stuff you already have
 - colored terminal output because we're not savages
 - exits cleanly on errors or ctrl+c (resets terminal colors too)
+- works on linux, macos, and windows
 
 ## dependencies
 
 you need these installed before running:
 
+- [python 3](https://www.python.org/) (3.7+, no pip packages needed)
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp)
 - [ffmpeg](https://ffmpeg.org/)
 
@@ -48,13 +51,16 @@ the script will yell at you if they're missing, but here's how to install them a
 
 ```bash
 # arch
-sudo pacman -S yt-dlp ffmpeg
+sudo pacman -S python yt-dlp ffmpeg
 
 # debian/ubuntu
-sudo apt install yt-dlp ffmpeg
+sudo apt install python3 yt-dlp ffmpeg
 
 # mac
-brew install yt-dlp ffmpeg
+brew install python yt-dlp ffmpeg
+
+# windows (with scoop)
+scoop install python yt-dlp ffmpeg
 ```
 
 ## format options
@@ -77,10 +83,6 @@ defaults to opus if you just hit enter or type something weird
 | 2 | album folder | creates a folder named after the album/playlist (recommended) |
 
 defaults to album folder
-
-## what's next
-
-still working on the bash version, gonna add more features and improvements to it first before anything else. once it's solid enough i'll port it to python so it works on windows and other platforms too
 
 ## license
 
