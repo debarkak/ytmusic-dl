@@ -360,14 +360,70 @@ def run_download(url, audio_format, output_template, dir_mode):
 
     start_time = time.time()
 
-    # run yt-dlp
+    # run yt-dlp with streaming output so we can inject per-song separators
+    # merges stderr into stdout since yt-dlp writes most output to stderr
     try:
-        result = subprocess.run(cmd)
-        exit_code = result.returncode
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            **_subprocess_kwargs(),
+        )
     except FileNotFoundError:
         # yt-dlp binary not found (shouldn't happen after dep check, but just in case)
         print(f"\n  {C.RED}✗{C.RST} couldn't run yt-dlp, is it in your PATH?")
         sys.exit(1)
+
+    # patterns for parsing yt-dlp output
+    item_pattern = re.compile(r"\[download\] Downloading item (\d+) of (\d+)")
+    # matches destination lines and "already been downloaded" lines
+    # grabs the song name from filenames like "Album/02 - Song Name.opus"
+    dest_pattern = re.compile(
+        r"\[download\].*?[\\/](?:\d+ - )?(.+?)\.(mp3|opus|m4a|flac|wav)"
+    )
+
+    current_track = 0
+    total_tracks = 0
+    header_printed = False
+
+    for line in process.stdout:
+        line = line.rstrip("\n")
+
+        # detect new track: [download] Downloading item X of Y
+        m = item_pattern.search(line)
+        if m:
+            # close the previous track's block
+            if header_printed:
+                hr(C.CYN)
+                print()
+            current_track = int(m.group(1))
+            total_tracks = int(m.group(2))
+            header_printed = False
+            print(line)
+            continue
+
+        # grab song name from destination / already-downloaded line
+        if not header_printed and current_track > 0:
+            m2 = dest_pattern.search(line)
+            if m2:
+                song_name = m2.group(1)
+                hr(C.CYN)
+                print(f"  {C.MGN}{C.BLD}♫  {song_name}{C.RST}  {C.YLW}[{current_track}/{total_tracks}]{C.RST}")
+                hr(C.CYN)
+                header_printed = True
+                print(line)
+                continue
+
+        # pass everything else through
+        print(line)
+
+    process.wait()
+    exit_code = process.returncode
+
+    # close the last track's block
+    if header_printed:
+        hr(C.CYN)
 
     elapsed = int(time.time() - start_time)
     time_str = format_time(elapsed)
