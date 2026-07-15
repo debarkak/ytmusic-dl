@@ -16,6 +16,15 @@ import urllib.request
 import urllib.parse
 from pathlib import Path
 
+try:
+    import mutagen
+    from mutagen.id3 import ID3, USLT, Encoding
+    from mutagen.flac import FLAC
+    from mutagen.mp4 import MP4
+    from mutagen.oggopus import OggOpus
+except ImportError:
+    mutagen = None
+
 
 # ── platform detection ──────────────────────
 IS_WINDOWS = platform.system() == "Windows"
@@ -501,7 +510,40 @@ def run_download(url, audio_format, output_template, dir_mode, embed_lyrics):
                         if lyrics:
                             with open(lrc_file, "w", encoding="utf-8") as lf:
                                 lf.write(lyrics)
-                            print(f"  {C.GRN}✓{C.RST} {title}")
+                                
+                            embedded = False
+                            if mutagen:
+                                try:
+                                    ext = audio_file.suffix.lower()
+                                    if ext == ".mp3":
+                                        audio = ID3(audio_file)
+                                        # Remove old unsynced lyrics if present to avoid duplicates
+                                        audio.delall("USLT")
+                                        audio.add(USLT(encoding=Encoding.UTF8, lang='eng', desc='', text=lyrics))
+                                        audio.save(v2_version=3)
+                                        embedded = True
+                                    elif ext == ".flac":
+                                        audio = FLAC(audio_file)
+                                        audio["LYRICS"] = lyrics
+                                        audio.save()
+                                        embedded = True
+                                    elif ext == ".m4a":
+                                        audio = MP4(audio_file)
+                                        audio["\xa9lyr"] = [lyrics]
+                                        audio.save()
+                                        embedded = True
+                                    elif ext == ".opus":
+                                        audio = OggOpus(audio_file)
+                                        audio["LYRICS"] = lyrics
+                                        audio.save()
+                                        embedded = True
+                                except Exception:
+                                    pass
+                                    
+                            if embedded:
+                                print(f"  {C.GRN}✓{C.RST} {title} (embedded & saved as .lrc)")
+                            else:
+                                print(f"  {C.GRN}✓{C.RST} {title} (saved as .lrc)")
                         else:
                             print(f"  {C.YLW}!{C.RST} {C.DIM}{title} (no lyrics on lrclib){C.RST}")
                     else:
