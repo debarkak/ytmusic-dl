@@ -351,9 +351,14 @@ def format_time(seconds):
 
 
 # ── process lyrics ──────────────────────────
-def process_lyrics(info_json_path, embed_lyrics):
+def process_lyrics(info_json_path, embed_lyrics, state=None, verbose=False):
     if not embed_lyrics or not info_json_path.exists():
         return None
+        
+    if state and not verbose:
+        state.song_pct = 95.0
+        state.song_status = "Fetching lyrics..."
+        render_progress(state)
         
     try:
         with open(info_json_path, "r", encoding="utf-8") as f:
@@ -432,28 +437,73 @@ def process_lyrics(info_json_path, embed_lyrics):
                         pass
                             
                 if embedded:
-                    print(f"  {C.GRN}✓{C.RST} {C.DIM}Lyrics embedded & saved as .lrc{C.RST}")
-                    return f"  {C.GRN}✓{C.RST} {title} (embedded & saved as .lrc)"
+                    if verbose: print(f"  {C.GRN}✓{C.RST} {C.DIM}Lyrics embedded & saved as .lrc{C.RST}")
+                    res = f"  {C.GRN}✓{C.RST} {title} (embedded & saved as .lrc)"
                 else:
-                    print(f"  {C.GRN}✓{C.RST} {C.DIM}Lyrics saved as .lrc{C.RST}")
-                    return f"  {C.GRN}✓{C.RST} {title} (saved as .lrc)"
+                    if verbose: print(f"  {C.GRN}✓{C.RST} {C.DIM}Lyrics saved as .lrc{C.RST}")
+                    res = f"  {C.GRN}✓{C.RST} {title} (saved as .lrc)"
             else:
-                print(f"  {C.YLW}!{C.RST} {C.DIM}No lyrics on lrclib{C.RST}")
-                return f"  {C.YLW}!{C.RST} {C.DIM}{title} (no lyrics on lrclib){C.RST}"
+                if verbose: print(f"  {C.YLW}!{C.RST} {C.DIM}No lyrics on lrclib{C.RST}")
+                res = f"  {C.YLW}!{C.RST} {C.DIM}{title} (no lyrics on lrclib){C.RST}"
         else:
-            print(f"  {C.YLW}!{C.RST} {C.DIM}Not found on lrclib{C.RST}")
-            return f"  {C.YLW}!{C.RST} {C.DIM}{title} (not found on lrclib){C.RST}"
+            if verbose: print(f"  {C.YLW}!{C.RST} {C.DIM}Not found on lrclib{C.RST}")
+            res = f"  {C.YLW}!{C.RST} {C.DIM}{title} (not found on lrclib){C.RST}"
     except Exception as e:
-        return f"  {C.RED}✗{C.RST} {info_json_path.name} (error: {e})"
+        res = f"  {C.RED}✗{C.RST} {info_json_path.name} (error: {e})"
     finally:
         try:
             info_json_path.unlink()
         except OSError:
             pass
 
+    if state and not verbose:
+        state.song_pct = 100.0
+        state.song_status = "Done"
+        render_progress(state)
+    return res
+
+class UIState:
+    def __init__(self):
+        self.batch_idx = 0
+        self.batch_total = 0
+        self.album_track = 0
+        self.album_total = 0
+        self.song_name = "..."
+        self.song_pct = 0.0
+        self.song_status = "Waiting"
+        self.rendered_lines = 0
+
+def render_progress(state):
+    # Hide cursor
+    sys.stdout.write("\033[?25l")
+    
+    if state.rendered_lines > 0:
+        sys.stdout.write(f"\033[{state.rendered_lines}A")
+        
+    lines = []
+    
+    batch_pct = (state.batch_idx / state.batch_total * 100) if state.batch_total > 0 else 0
+    bb = int(30 * batch_pct / 100)
+    batch_bar = "█" * bb + "░" * (30 - bb)
+    lines.append(f"  {C.DIM}Overall:{C.RST} [{C.BLU}{batch_bar}{C.RST}] {state.batch_idx}/{state.batch_total} batches")
+    
+    album_pct = (state.album_track / state.album_total * 100) if state.album_total > 0 else 0
+    ab = int(30 * album_pct / 100)
+    album_bar = "█" * ab + "░" * (30 - ab)
+    lines.append(f"  {C.DIM}Album:  {C.RST} [{C.CYN}{album_bar}{C.RST}] {state.album_track}/{state.album_total} tracks")
+    
+    sb = int(30 * state.song_pct / 100)
+    song_bar = "█" * sb + "░" * (30 - sb)
+    status_color = C.DIM if state.song_status in ["Waiting", "Done"] else C.MGN
+    lines.append(f"  {C.DIM}Song:   {C.RST} [{status_color}{song_bar}{C.RST}] {state.song_pct:>5.1f}% ({state.song_status}) {C.DIM}─ {state.song_name}{C.RST}")
+    
+    for line in lines:
+        sys.stdout.write(f"\r{line}\033[K\n")
+    sys.stdout.flush()
+    state.rendered_lines = len(lines)
 
 # ── run download ────────────────────────────
-def run_download(url, audio_format, output_template, dir_mode, embed_lyrics, verbose=False):
+def run_download(url, audio_format, output_template, dir_mode, embed_lyrics, state=None, verbose=False):
     extra_flags, thumb_convert, thumb_codec = build_format_flags(audio_format)
 
     section("downloading")
@@ -534,14 +584,18 @@ def run_download(url, audio_format, output_template, dir_mode, embed_lyrics, ver
     progress_pattern = re.compile(r"\[download\]\s+([\d\.]+)%")
     info_json_pattern = re.compile(r"\[info\] Writing video metadata as JSON to:\s+(.+?\.info\.json)")
 
-    current_track = 0
-    total_tracks = 0
     header_printed = False
     last_was_progress = False
-    saved_progress_bar = f"[{C.BLU}{'█'*30}{C.RST}] 100.0%"
     
     current_info_json = None
     lyrics_results = []
+    
+    if state and not verbose:
+        state.song_pct = 0.0
+        state.song_status = "Waiting"
+        state.album_track = 0
+        state.album_total = 1 # default
+        render_progress(state)
 
     for line in process.stdout:
         line = line.rstrip("\n")
@@ -549,20 +603,28 @@ def run_download(url, audio_format, output_template, dir_mode, embed_lyrics, ver
         # detect new track: [download] Downloading item X of Y
         m = item_pattern.search(line)
         if m:
-            if last_was_progress: print(); last_was_progress = False
+            if last_was_progress: 
+                if verbose: print()
+                last_was_progress = False
             
             # process lyrics for the PREVIOUS track before starting this new one
-            if header_printed and current_info_json:
-                res = process_lyrics(Path(current_info_json), embed_lyrics)
+            if current_info_json:
+                res = process_lyrics(Path(current_info_json), embed_lyrics, state, verbose)
                 if res: lyrics_results.append(res)
                 current_info_json = None
                 
             # close the previous track's block
-            if header_printed:
+            if header_printed and verbose:
                 hr(C.CYN)
                 print()
-            current_track = int(m.group(1))
-            total_tracks = int(m.group(2))
+                
+            if state:
+                state.album_track = int(m.group(1))
+                state.album_total = int(m.group(2))
+                state.song_pct = 0.0
+                state.song_status = "Waiting"
+                if not verbose: render_progress(state)
+            
             header_printed = False
             if verbose: print(line)
             continue
@@ -576,12 +638,24 @@ def run_download(url, audio_format, output_template, dir_mode, embed_lyrics, ver
         if not header_printed:
             m2 = dest_pattern.search(line)
             if m2:
-                if last_was_progress: print(); last_was_progress = False
+                if last_was_progress: 
+                    if verbose: print()
+                    last_was_progress = False
                 song_name = m2.group(1)
-                track_info = f"  {C.YLW}[{current_track}/{total_tracks}]{C.RST}" if total_tracks > 0 else ""
-                hr(C.CYN)
-                print(f"  {C.MGN}{C.BLD}♫  {song_name}{C.RST}{track_info}")
-                hr(C.CYN)
+                
+                if state:
+                    state.song_name = song_name
+                    state.song_pct = 0.0
+                    state.song_status = "Downloading"
+                    if state.album_track == 0: # If item_pattern was never hit
+                        state.album_track = 1
+                    if not verbose: render_progress(state)
+                
+                if verbose:
+                    track_info = f"  {C.YLW}[{state.album_track if state else 1}/{state.album_total if state else 1}]{C.RST}"
+                    hr(C.CYN)
+                    print(f"  {C.MGN}{C.BLD}♫  {song_name}{C.RST}{track_info}")
+                    hr(C.CYN)
                 header_printed = True
                 if verbose: print(line)
                 continue
@@ -592,48 +666,63 @@ def run_download(url, audio_format, output_template, dir_mode, embed_lyrics, ver
             pct_str = mp.group(1)
             try:
                 pct = float(pct_str)
-                bar_len = 30
-                filled = int(bar_len * pct / 100)
-                bar = "█" * filled + "░" * (bar_len - filled)
-                eta_match = re.search(r"ETA\s+([\d:]+)", line)
-                eta = eta_match.group(1) if eta_match else ""
-                eta_str = f" ETA {eta}" if eta else ""
-                
-                saved_progress_bar = f"[{C.BLU}{bar}{C.RST}] {pct:>5.1f}%{C.DIM}{eta_str}{C.RST}"
-                sys.stdout.write(f"\r  {C.DIM}Downloading:{C.RST} {saved_progress_bar}\033[K")
-                sys.stdout.flush()
+                if state and not verbose:
+                    state.song_pct = pct * 0.75 # 0-75%
+                    state.song_status = "Downloading"
+                    render_progress(state)
+                elif verbose:
+                    bar_len = 30
+                    filled = int(bar_len * pct / 100)
+                    bar = "█" * filled + "░" * (bar_len - filled)
+                    eta_match = re.search(r"ETA\s+([\d:]+)", line)
+                    eta = eta_match.group(1) if eta_match else ""
+                    eta_str = f" ETA {eta}" if eta else ""
+                    sys.stdout.write(f"\r  {C.DIM}Downloading:{C.RST} [{C.BLU}{bar}{C.RST}] {pct:>5.1f}%{C.DIM}{eta_str}{C.RST}\033[K")
+                    sys.stdout.flush()
                 last_was_progress = True
             except ValueError:
                 pass
             if verbose:
-                print()
-                print(line)
-                last_was_progress = False
+                # Need newline for next line if verbose but not logging progress
+                pass
             continue
             
         # print errors or warnings
         if "ERROR:" in line or "WARNING:" in line:
-            if last_was_progress: print(); last_was_progress = False
+            if last_was_progress: 
+                if verbose: print()
+                last_was_progress = False
+            
+            # Since errors break our nice fixed block, we need to temporarily clear the block, 
+            # print the error, and redraw it.
+            if state and not verbose:
+                sys.stdout.write(f"\033[{state.rendered_lines}A")
+                sys.stdout.write("\033[J") # clear below
+                state.rendered_lines = 0
+                
             print(f"  {C.YLW}{line}{C.RST}")
+            
+            if state and not verbose:
+                render_progress(state)
             continue
 
         # post-processing status indicators
-        if not verbose and ("[ExtractAudio]" in line or "[EmbedThumbnail]" in line or "[Metadata]" in line):
-            status = ""
-            if "[ExtractAudio]" in line:
-                status = f" {C.DIM}(Converting audio...){C.RST}"
-            elif "[Metadata]" in line:
-                status = f" {C.DIM}(Adding metadata...){C.RST}"
-            elif "[EmbedThumbnail]" in line:
-                status = f" {C.DIM}(Embedding thumbnail...){C.RST}"
-            
-            # Use a full 100% bar for processing if we skipped downloading because it existed
-            if "Downloading" not in saved_progress_bar:
-                 saved_progress_bar = f"[{C.BLU}{'█'*30}{C.RST}] 100.0%"
-                 
-            sys.stdout.write(f"\r  {C.DIM}Processing: {C.RST} {saved_progress_bar}{status}\033[K")
-            sys.stdout.flush()
-            last_was_progress = True
+        if "[ExtractAudio]" in line or "[EmbedThumbnail]" in line or "[Metadata]" in line:
+            if state and not verbose:
+                if "[ExtractAudio]" in line:
+                    state.song_pct = 75.0
+                    state.song_status = "Converting audio"
+                elif "[Metadata]" in line:
+                    state.song_pct = 85.0
+                    state.song_status = "Adding metadata"
+                elif "[EmbedThumbnail]" in line:
+                    state.song_pct = 95.0
+                    state.song_status = "Embedding thumbnail"
+                render_progress(state)
+            elif verbose:
+                if last_was_progress: print()
+                print(line)
+            last_was_progress = False
             continue
 
         # pass everything else through if verbose
@@ -642,22 +731,28 @@ def run_download(url, audio_format, output_template, dir_mode, embed_lyrics, ver
             print(line)
 
     process.wait()
-    if last_was_progress: print(); last_was_progress = False
+    if last_was_progress and verbose: print()
+    last_was_progress = False
     
     # Process the last track's lyrics (or single-video download)
-    if header_printed and current_info_json:
-        res = process_lyrics(Path(current_info_json), embed_lyrics)
+    if current_info_json:
+        res = process_lyrics(Path(current_info_json), embed_lyrics, state, verbose)
         if res: lyrics_results.append(res)
         current_info_json = None
         
     exit_code = process.returncode
 
     # close the last track's block
-    if header_printed:
+    if header_printed and verbose:
         hr(C.CYN)
 
     # Print final lyrics summary if applicable
     if embed_lyrics and lyrics_results:
+        # Move past the fixed block
+        if state and not verbose:
+            sys.stdout.write(f"\033[{state.rendered_lines}B\n")
+            state.rendered_lines = 0
+            
         print()
         section("lyrics summary")
         for res in lyrics_results:
@@ -842,13 +937,23 @@ def main():
         audio_format = prompt_format()
         output_template, dir_mode = prompt_directory()
         embed_lyrics = prompt_lyrics()
+        
+        ui_state = UIState()
+        ui_state.batch_total = len(urls_to_download)
 
         for idx, target_url in enumerate(urls_to_download):
-            if len(urls_to_download) > 1:
+            ui_state.batch_idx = idx + 1
+            if len(urls_to_download) > 1 and verbose:
                 print(f"\n  {C.MGN}══════════════════════════════════════════{C.RST}")
                 print(f"  {C.BLD}Processing batch item {idx+1} of {len(urls_to_download)}{C.RST}")
                 print(f"  {C.MGN}══════════════════════════════════════════{C.RST}")
-            run_download(target_url, audio_format, output_template, dir_mode, embed_lyrics, verbose)
+                
+            run_download(target_url, audio_format, output_template, dir_mode, embed_lyrics, ui_state, verbose)
+            
+        if ui_state.rendered_lines > 0:
+            sys.stdout.write(f"\033[{ui_state.rendered_lines}B\n")
+            sys.stdout.write("\033[?25h") # show cursor
+            ui_state.rendered_lines = 0
             
     except KeyboardInterrupt:
         sys.stdout.write("\033[?25h\n") # ensure cursor shown
