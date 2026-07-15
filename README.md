@@ -1,4 +1,8 @@
 # ytmusic-dl
+
+> [!WARNING]  
+> **Disclaimer:** This tool was created heavily using AI to save time. It was originally built just for my personal use, but I decided to open-source it. Use at your own discretion!
+
 A zero-BS, interactive tool for ripping YouTube Music playlists and albums with proper metadata, square album art, and perfectly-synced lyrics.
 
 ### Usage
