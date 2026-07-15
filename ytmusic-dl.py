@@ -345,6 +345,108 @@ def format_time(seconds):
     return f"{seconds}s"
 
 
+# ── process lyrics ──────────────────────────
+def process_lyrics(info_json_path, embed_lyrics):
+    if not embed_lyrics or not info_json_path.exists():
+        return None
+        
+    try:
+        with open(info_json_path, "r", encoding="utf-8") as f:
+            info = json.load(f)
+            
+        artist = info.get("artist") or info.get("creator") or info.get("uploader") or ""
+        title = info.get("title") or info.get("fulltitle") or info.get("alt_title") or ""
+        
+        if not title:
+            return None
+            
+        base_name = info_json_path.name[:-10]
+        audio_file = None
+        for ext in ["mp3", "opus", "m4a", "flac", "wav"]:
+            candidate = info_json_path.with_name(f"{base_name}.{ext}")
+            if candidate.exists():
+                audio_file = candidate
+                break
+                
+        if not audio_file:
+            return None
+            
+        lrc_file = audio_file.with_suffix(".lrc")
+        if lrc_file.exists():
+            print(f"  {C.GRN}✓{C.RST} {C.DIM}Lyrics: already embedded/saved by yt-dlp{C.RST}")
+            return f"  {C.GRN}✓{C.RST} {title} (already handled)"
+            
+        query = urllib.parse.quote(f"{title} {artist}".strip())
+        url = f"https://lrclib.net/api/search?q={query}"
+        req = urllib.request.Request(url, headers={"User-Agent": "ytmusic-dl (https://github.com/debarkak/ytmusic-dl)"})
+        
+        retries = 2
+        data = None
+        for attempt in range(retries):
+            try:
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    data = json.loads(resp.read())
+                break
+            except Exception as e:
+                if attempt == retries - 1:
+                    return f"  {C.RED}✗{C.RST} {title} (error: {e})"
+                time.sleep(1)
+
+        if data:
+            lyrics = data[0].get("syncedLyrics") or data[0].get("plainLyrics")
+            if lyrics:
+                with open(lrc_file, "w", encoding="utf-8") as lf:
+                    lf.write(lyrics)
+                    
+                embedded = False
+                if mutagen:
+                    try:
+                        ext = audio_file.suffix.lower()
+                        if ext == ".mp3":
+                            audio = ID3(audio_file)
+                            audio.delall("USLT")
+                            audio.add(USLT(encoding=Encoding.UTF8, lang='eng', desc='', text=lyrics))
+                            audio.save(v2_version=3)
+                            embedded = True
+                        elif ext == ".flac":
+                            audio = FLAC(audio_file)
+                            audio["LYRICS"] = lyrics
+                            audio.save()
+                            embedded = True
+                        elif ext == ".m4a":
+                            audio = MP4(audio_file)
+                            audio["\xa9lyr"] = [lyrics]
+                            audio.save()
+                            embedded = True
+                        elif ext == ".opus":
+                            audio = OggOpus(audio_file)
+                            audio["LYRICS"] = lyrics
+                            audio.save()
+                            embedded = True
+                    except Exception:
+                        pass
+                            
+                if embedded:
+                    print(f"  {C.GRN}✓{C.RST} {C.DIM}Lyrics embedded & saved as .lrc{C.RST}")
+                    return f"  {C.GRN}✓{C.RST} {title} (embedded & saved as .lrc)"
+                else:
+                    print(f"  {C.GRN}✓{C.RST} {C.DIM}Lyrics saved as .lrc{C.RST}")
+                    return f"  {C.GRN}✓{C.RST} {title} (saved as .lrc)"
+            else:
+                print(f"  {C.YLW}!{C.RST} {C.DIM}No lyrics on lrclib{C.RST}")
+                return f"  {C.YLW}!{C.RST} {C.DIM}{title} (no lyrics on lrclib){C.RST}"
+        else:
+            print(f"  {C.YLW}!{C.RST} {C.DIM}Not found on lrclib{C.RST}")
+            return f"  {C.YLW}!{C.RST} {C.DIM}{title} (not found on lrclib){C.RST}"
+    except Exception as e:
+        return f"  {C.RED}✗{C.RST} {info_json_path.name} (error: {e})"
+    finally:
+        try:
+            info_json_path.unlink()
+        except OSError:
+            pass
+
+
 # ── run download ────────────────────────────
 def run_download(url, audio_format, output_template, dir_mode, embed_lyrics, verbose=False):
     extra_flags, thumb_convert, thumb_codec = build_format_flags(audio_format)
@@ -425,19 +527,31 @@ def run_download(url, audio_format, output_template, dir_mode, embed_lyrics, ver
         r"\[download\]\s+(?:Destination:\s*)?(?:.*?[\\/])?(?:\d+\s*-\s*)?(.+?)\.\w+"
     )
     progress_pattern = re.compile(r"\[download\]\s+([\d\.]+)%")
+    info_json_pattern = re.compile(r"\[info\] Writing video metadata as JSON to:\s+(.+?\.info\.json)")
 
     current_track = 0
     total_tracks = 0
     header_printed = False
     last_was_progress = False
+    saved_progress_bar = f"[{C.BLU}{'█'*30}{C.RST}] 100.0%"
+    
+    current_info_json = None
+    lyrics_results = []
 
     for line in process.stdout:
         line = line.rstrip("\n")
-
+        
         # detect new track: [download] Downloading item X of Y
         m = item_pattern.search(line)
         if m:
             if last_was_progress: print(); last_was_progress = False
+            
+            # process lyrics for the PREVIOUS track before starting this new one
+            if header_printed and current_info_json:
+                res = process_lyrics(Path(current_info_json), embed_lyrics)
+                if res: lyrics_results.append(res)
+                current_info_json = None
+                
             # close the previous track's block
             if header_printed:
                 hr(C.CYN)
@@ -447,6 +561,11 @@ def run_download(url, audio_format, output_template, dir_mode, embed_lyrics, ver
             header_printed = False
             if verbose: print(line)
             continue
+            
+        # track info JSON path
+        m_info = info_json_pattern.search(line)
+        if m_info:
+            current_info_json = m_info.group(1)
 
         # grab song name from destination / already-downloaded line
         if not header_printed:
@@ -475,7 +594,8 @@ def run_download(url, audio_format, output_template, dir_mode, embed_lyrics, ver
                 eta = eta_match.group(1) if eta_match else ""
                 eta_str = f" ETA {eta}" if eta else ""
                 
-                sys.stdout.write(f"\r  {C.DIM}Downloading:{C.RST} [{C.BLU}{bar}{C.RST}] {pct:>5.1f}%{C.DIM}{eta_str}{C.RST}\033[K")
+                saved_progress_bar = f"[{C.BLU}{bar}{C.RST}] {pct:>5.1f}%{C.DIM}{eta_str}{C.RST}"
+                sys.stdout.write(f"\r  {C.DIM}Downloading:{C.RST} {saved_progress_bar}\033[K")
                 sys.stdout.flush()
                 last_was_progress = True
             except ValueError:
@@ -494,12 +614,19 @@ def run_download(url, audio_format, output_template, dir_mode, embed_lyrics, ver
 
         # post-processing status indicators
         if not verbose and ("[ExtractAudio]" in line or "[EmbedThumbnail]" in line or "[Metadata]" in line):
+            status = ""
             if "[ExtractAudio]" in line:
-                sys.stdout.write(f"\r  {C.DIM}Converting audio...{C.RST}\033[K")
+                status = f" {C.DIM}(Converting audio...){C.RST}"
             elif "[Metadata]" in line:
-                sys.stdout.write(f"\r  {C.DIM}Adding metadata...{C.RST}\033[K")
+                status = f" {C.DIM}(Adding metadata...){C.RST}"
             elif "[EmbedThumbnail]" in line:
-                sys.stdout.write(f"\r  {C.DIM}Embedding thumbnail...{C.RST}\033[K")
+                status = f" {C.DIM}(Embedding thumbnail...){C.RST}"
+            
+            # Use a full 100% bar for processing if we skipped downloading because it existed
+            if "Downloading" not in saved_progress_bar:
+                 saved_progress_bar = f"[{C.BLU}{'█'*30}{C.RST}] 100.0%"
+                 
+            sys.stdout.write(f"\r  {C.DIM}Processing: {C.RST} {saved_progress_bar}{status}\033[K")
             sys.stdout.flush()
             last_was_progress = True
             continue
@@ -511,112 +638,25 @@ def run_download(url, audio_format, output_template, dir_mode, embed_lyrics, ver
 
     process.wait()
     if last_was_progress: print(); last_was_progress = False
+    
+    # Process the last track's lyrics (or single-video download)
+    if header_printed and current_info_json:
+        res = process_lyrics(Path(current_info_json), embed_lyrics)
+        if res: lyrics_results.append(res)
+        current_info_json = None
+        
     exit_code = process.returncode
 
     # close the last track's block
     if header_printed:
         hr(C.CYN)
 
-    if embed_lyrics:
+    # Print final lyrics summary if applicable
+    if embed_lyrics and lyrics_results:
         print()
-        section("fetching lyrics (lrclib)")
-        found_any = False
-        for info_file in Path.cwd().rglob("*.info.json"):
-            found_any = True
-            try:
-                with open(info_file, "r", encoding="utf-8") as f:
-                    info = json.load(f)
-                
-                artist = info.get("artist") or info.get("creator") or info.get("uploader") or ""
-                title = info.get("title") or info.get("fulltitle") or info.get("alt_title") or ""
-                
-                if not title:
-                    continue
-                
-                base_name = info_file.name[:-10]
-                audio_file = None
-                for ext in ["mp3", "opus", "m4a", "flac", "wav"]:
-                    candidate = info_file.with_name(f"{base_name}.{ext}")
-                    if candidate.exists():
-                        audio_file = candidate
-                        break
-                
-                if not audio_file:
-                    continue
-                    
-                lrc_file = audio_file.with_suffix(".lrc")
-                if lrc_file.exists():
-                    print(f"  {C.GRN}✓{C.RST} {C.DIM}{title} (already embedded/saved by yt-dlp){C.RST}")
-                    continue
-                    
-                query = urllib.parse.quote(f"{title} {artist}".strip())
-                url = f"https://lrclib.net/api/search?q={query}"
-                req = urllib.request.Request(url, headers={"User-Agent": "ytmusic-dl (https://github.com/debarkak/ytmusic-dl)"})
-                
-                retries = 2
-                data = None
-                for attempt in range(retries):
-                    try:
-                        with urllib.request.urlopen(req, timeout=10) as resp:
-                            data = json.loads(resp.read())
-                        break
-                    except Exception as e:
-                        if attempt == retries - 1:
-                            raise e
-                        time.sleep(1)
-
-                if data:
-                    lyrics = data[0].get("syncedLyrics") or data[0].get("plainLyrics")
-                    if lyrics:
-                        with open(lrc_file, "w", encoding="utf-8") as lf:
-                            lf.write(lyrics)
-                            
-                        embedded = False
-                        if mutagen:
-                            try:
-                                ext = audio_file.suffix.lower()
-                                if ext == ".mp3":
-                                    audio = ID3(audio_file)
-                                    # Remove old unsynced lyrics if present to avoid duplicates
-                                    audio.delall("USLT")
-                                    audio.add(USLT(encoding=Encoding.UTF8, lang='eng', desc='', text=lyrics))
-                                    audio.save(v2_version=3)
-                                    embedded = True
-                                elif ext == ".flac":
-                                    audio = FLAC(audio_file)
-                                    audio["LYRICS"] = lyrics
-                                    audio.save()
-                                    embedded = True
-                                elif ext == ".m4a":
-                                    audio = MP4(audio_file)
-                                    audio["\xa9lyr"] = [lyrics]
-                                    audio.save()
-                                    embedded = True
-                                elif ext == ".opus":
-                                    audio = OggOpus(audio_file)
-                                    audio["LYRICS"] = lyrics
-                                    audio.save()
-                                    embedded = True
-                            except Exception:
-                                pass
-                                    
-                            if embedded:
-                                print(f"  {C.GRN}✓{C.RST} {title} (embedded & saved as .lrc)")
-                            else:
-                                print(f"  {C.GRN}✓{C.RST} {title} (saved as .lrc)")
-                        else:
-                            print(f"  {C.YLW}!{C.RST} {C.DIM}{title} (no lyrics on lrclib){C.RST}")
-                    else:
-                        print(f"  {C.YLW}!{C.RST} {C.DIM}{title} (not found on lrclib){C.RST}")
-            except Exception as e:
-                print(f"  {C.RED}✗{C.RST} {C.DIM}{info_file.name} (error: {e}){C.RST}")
-            finally:
-                try:
-                    info_file.unlink()
-                except OSError:
-                    pass
-        if not found_any:
-            print(f"  {C.DIM}no .info.json files found.{C.RST}")
+        section("lyrics summary")
+        for res in lyrics_results:
+            print(res)
 
     elapsed = int(time.time() - start_time)
     time_str = format_time(elapsed)
