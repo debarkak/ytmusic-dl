@@ -543,6 +543,7 @@ class UIState:
         self.song_status = "Waiting"
         self.song_eta = ""
         self.rendered_lines = 0
+        self.album_start_time = 0.0
 
 def render_progress(state):
     # Hide cursor
@@ -558,10 +559,26 @@ def render_progress(state):
     batch_bar = "█" * bb + "░" * (30 - bb)
     lines.append(f"  {C.DIM}Overall:{C.RST} [{C.BLU}{batch_bar}{C.RST}] {state.batch_idx}/{state.batch_total} batches")
     
+    album_eta_str = ""
+    if state.album_total > 0 and getattr(state, "album_start_time", 0.0) > 0:
+        completed_tracks = max(0, state.album_track - 1)
+        song_fraction = state.song_pct / 100.0
+        total_fraction = (completed_tracks + song_fraction) / state.album_total
+        if 0 < total_fraction < 1.0:
+            elapsed = time.time() - state.album_start_time
+            remaining_seconds = (elapsed / total_fraction) - elapsed
+            if remaining_seconds > 0:
+                mins, secs = divmod(int(remaining_seconds), 60)
+                hrs, mins = divmod(mins, 60)
+                if hrs > 0:
+                    album_eta_str = f" ETA {hrs:02d}:{mins:02d}:{secs:02d}"
+                else:
+                    album_eta_str = f" ETA {mins:02d}:{secs:02d}"
+                    
     album_pct = (state.album_track / state.album_total * 100) if state.album_total > 0 else 0
     ab = int(30 * album_pct / 100)
     album_bar = "█" * ab + "░" * (30 - ab)
-    lines.append(f"  {C.DIM}Album:  {C.RST} [{C.CYN}{album_bar}{C.RST}] {state.album_track}/{state.album_total} tracks")
+    lines.append(f"  {C.DIM}Album:  {C.RST} [{C.CYN}{album_bar}{C.RST}] {state.album_track}/{state.album_total} tracks{C.DIM}{album_eta_str}{C.RST}")
     
     sb = int(30 * state.song_pct / 100)
     song_bar = "█" * sb + "░" * (30 - sb)
@@ -1105,6 +1122,7 @@ def main():
 
         for idx, target_url in enumerate(urls_to_download):
             ui_state.batch_idx = idx + 1
+            ui_state.album_start_time = time.time()
             if len(urls_to_download) > 1 and verbose:
                 print(f"\n  {C.MGN}══════════════════════════════════════════{C.RST}")
                 print(f"  {C.BLD}Processing batch item {idx+1} of {len(urls_to_download)}{C.RST}")
