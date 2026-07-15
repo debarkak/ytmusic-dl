@@ -429,12 +429,18 @@ def process_lyrics(info_json_path, lyrics_mode, state=None, verbose=False):
                                     
                         if ext == ".mp3":
                             audio = ID3(audio_file)
-                            audio["LYRICS"] = lyrics
-                            audio.save()
+                            audio.delall("USLT")
+                            audio.add(USLT(encoding=Encoding.UTF8, lang='eng', desc='', text=lyrics))
+                            audio.save(v2_version=3)
                             embedded = True
                         elif ext == ".m4a":
                             audio = MP4(audio_file)
                             audio["\xa9lyr"] = [lyrics]
+                            audio.save()
+                            embedded = True
+                        elif ext == ".flac":
+                            audio = FLAC(audio_file)
+                            audio["LYRICS"] = lyrics
                             audio.save()
                             embedded = True
                         elif ext == ".opus":
@@ -444,8 +450,17 @@ def process_lyrics(info_json_path, lyrics_mode, state=None, verbose=False):
                             embedded = True
                     except Exception:
                         pass
+                        
+                if lyrics_mode == "embed" and embedded:
+                    try:
+                        lrc_path.unlink()
+                    except OSError:
+                        pass
                             
-                if embedded:
+                if lyrics_mode == "embed":
+                    if verbose: print(f"  {C.GRN}✓{C.RST} {C.DIM}Lyrics embedded{C.RST}")
+                    res = f"  {C.GRN}✓{C.RST} {title} (embedded)"
+                elif lyrics_mode == "both":
                     if verbose: print(f"  {C.GRN}✓{C.RST} {C.DIM}Lyrics embedded & saved as .lrc{C.RST}")
                     res = f"  {C.GRN}✓{C.RST} {title} (embedded & saved as .lrc)"
                 else:
