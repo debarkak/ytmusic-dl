@@ -268,6 +268,24 @@ def prompt_directory():
     return template, mode
 
 
+# ── prompt lyrics ───────────────────────────
+def prompt_lyrics():
+    print()
+    print(f"  {C.BLD}embed lyrics?{C.RST}")
+    print()
+    print(f"    {C.YLW}1{C.RST})  yes")
+    print(f"    {C.YLW}2{C.RST})  no {C.DIM}─{C.RST} default")
+    print()
+    try:
+        choice = input("    [1/2, default 2]: ").strip()
+    except EOFError:
+        choice = ""
+
+    embed = choice == "1"
+    print(f"  {C.GRN}✓{C.RST} {C.BLD}{'yes' if embed else 'no'}{C.RST}")
+    return embed
+
+
 # ── build format-specific flags ─────────────
 def build_format_flags(audio_format):
     extra_flags = []
@@ -315,7 +333,7 @@ def format_time(seconds):
 
 
 # ── run download ────────────────────────────
-def run_download(url, audio_format, output_template, dir_mode):
+def run_download(url, audio_format, output_template, dir_mode, embed_lyrics):
     extra_flags, thumb_convert, thumb_codec = build_format_flags(audio_format)
 
     section("downloading")
@@ -330,6 +348,8 @@ def run_download(url, audio_format, output_template, dir_mode):
         print(f"  {C.DIM}├ mp3 quality: VBR q0 (best){C.RST}")
         print(f"  {C.DIM}├ thumbnail format: jpg (ID3 compat){C.RST}")
     print(f"  {C.DIM}├ track numbering: from playlist index{C.RST}")
+    if embed_lyrics:
+        print(f"  {C.DIM}├ lyrics: embedded or saved as .lrc{C.RST}")
     print(f"  {C.DIM}├ skip existing: yes{C.RST}")
     print(f"  {C.DIM}└ concurrent fragments: {FRAGMENTS}{C.RST}")
     print()
@@ -354,8 +374,18 @@ def run_download(url, audio_format, output_template, dir_mode):
         "--parse-metadata", "playlist_index:%(track_number)s",
         "--no-overwrites",
         "--concurrent-fragments", str(FRAGMENTS),
-        url,
     ]
+
+    if embed_lyrics:
+        cmd.extend([
+            "--write-subs",
+            "--write-auto-subs",
+            "--sub-langs", "all",
+            "--embed-subs",
+            "--convert-subs", "lrc"
+        ])
+
+    cmd.append(url)
 
     start_time = time.time()
 
@@ -466,8 +496,9 @@ def main():
 
         audio_format = prompt_format()
         output_template, dir_mode = prompt_directory()
+        embed_lyrics = prompt_lyrics()
 
-        run_download(url, audio_format, output_template, dir_mode)
+        run_download(url, audio_format, output_template, dir_mode, embed_lyrics)
     except KeyboardInterrupt:
         handle_interrupt(None, None)
     finally:
