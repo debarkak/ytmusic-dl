@@ -429,17 +429,17 @@ def process_lyrics(info_json_path, lyrics_mode, state=None, verbose=False):
         url = f"https://lrclib.net/api/search?q={query}"
         req = urllib.request.Request(url, headers={"User-Agent": "ytmusic-dl (https://github.com/debarkak/ytmusic-dl)"})
         
-        retries = 2
+        retries = 3
         data = None
         for attempt in range(retries):
             try:
-                with urllib.request.urlopen(req, timeout=10) as resp:
+                with urllib.request.urlopen(req, timeout=15) as resp:
                     data = json.loads(resp.read())
                 break
             except Exception as e:
                 if attempt == retries - 1:
                     return f"  {C.RED}✗{C.RST} {title} (error: {e})"
-                time.sleep(1)
+                time.sleep(2 * (attempt + 1))
 
         if data:
             lyrics = data[0].get("syncedLyrics") or data[0].get("plainLyrics")
