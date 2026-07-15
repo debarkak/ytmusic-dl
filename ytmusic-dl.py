@@ -266,14 +266,14 @@ def prompt_directory():
 
     # yt-dlp handles path separators internally, so / works on all platforms
     if choice == "1":
-        template = "%(track_number,playlist_index)02d - %(title)s.%(ext)s"
+        template = "%(track_number,playlist_index,autonumber)02d - %(title)s.%(ext)s"
         mode = "flat"
     elif choice == "2":
-        template = "%(album,playlist_title)s/%(track_number,playlist_index)02d - %(title)s.%(ext)s"
+        template = "%(album,playlist_title,title)s/%(track_number,playlist_index,autonumber)02d - %(title)s.%(ext)s"
         mode = "album_folder"
     else:
         print(f"    {C.YLW}!{C.RST} {C.DIM}not valid, going with album folder{C.RST}")
-        template = "%(album,playlist_title)s/%(track_number,playlist_index)02d - %(title)s.%(ext)s"
+        template = "%(album,playlist_title,title)s/%(track_number,playlist_index,autonumber)02d - %(title)s.%(ext)s"
         mode = "album_folder"
 
     print(f"  {C.GRN}✓{C.RST} {C.BLD}{mode}{C.RST}")
@@ -385,6 +385,7 @@ def run_download(url, audio_format, output_template, dir_mode, embed_lyrics, ver
         "--ppa", f"ThumbnailsConvertor+ffmpeg_o:-c:v {thumb_codec} -vf {crop_filter}",
         "--parse-metadata", "playlist_index:%(track_number)s",
         "--no-overwrites",
+        "--no-write-playlist-metafiles",
         "--concurrent-fragments", str(FRAGMENTS),
     ]
 
@@ -420,7 +421,7 @@ def run_download(url, audio_format, output_template, dir_mode, embed_lyrics, ver
     # patterns for parsing yt-dlp output
     item_pattern = re.compile(r"\[download\] Downloading item (\d+) of (\d+)")
     dest_pattern = re.compile(
-        r"\[download\]\s+(?:Destination:\s*)?(?:.*?[\\/])?(?:\d+\s*-\s*)?(.+?)\.(mp3|opus|m4a|flac|wav)"
+        r"\[download\]\s+(?:Destination:\s*)?(?:.*?[\\/])?(?:\d+\s*-\s*)?(.+?)\.\w+"
     )
     progress_pattern = re.compile(r"\[download\]\s+([\d\.]+)%")
 
