@@ -5,7 +5,6 @@
 # ─────────────────────────────────────────────
 
 import sys
-import os
 import re
 import signal
 import shutil
@@ -378,9 +377,9 @@ def run_download(url, audio_format, output_template, dir_mode):
     # patterns for parsing yt-dlp output
     item_pattern = re.compile(r"\[download\] Downloading item (\d+) of (\d+)")
     # matches destination lines and "already been downloaded" lines
-    # grabs the song name from filenames like "Album/02 - Song Name.opus"
+    # grabs the song name from filenames like "Album/02 - Song Name.opus" or "02 - Song Name.opus"
     dest_pattern = re.compile(
-        r"\[download\].*?[\\/](?:\d+ - )?(.+?)\.(mp3|opus|m4a|flac|wav)"
+        r"\[download\]\s+(?:Destination:\s*)?(?:.*?[\\/])?(?:\d+\s*-\s*)?(.+?)\.(mp3|opus|m4a|flac|wav)"
     )
 
     current_track = 0
@@ -453,6 +452,10 @@ def run_download(url, audio_format, output_template, dir_mode):
 
 # ── main ────────────────────────────────────
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help"):
+        print(f"Usage: {sys.argv[0]} [URL]")
+        sys.exit(0)
+
     try:
         banner()
         check_deps()
