@@ -429,17 +429,30 @@ def process_lyrics(info_json_path, lyrics_mode, state=None, verbose=False):
         url = f"https://lrclib.net/api/search?q={query}"
         req = urllib.request.Request(url, headers={"User-Agent": "ytmusic-dl (https://github.com/debarkak/ytmusic-dl)"})
         
-        retries = 3
+        retries = 10
         data = None
         for attempt in range(retries):
+            if state and not verbose and lyrics_mode != "none":
+                state.song_pct = 90.0 + (attempt * 0.8)
+                if attempt == 0:
+                    state.song_status = "Fetching lyrics..."
+                else:
+                    state.song_status = f"Fetching lyrics (retry {attempt}/{retries})..."
+                render_progress(state)
+                
             try:
                 with urllib.request.urlopen(req, timeout=15) as resp:
                     data = json.loads(resp.read())
+                    
+                if state and not verbose and lyrics_mode != "none":
+                    state.song_pct = 99.0
+                    state.song_status = "Embedding lyrics..."
+                    render_progress(state)
                 break
             except Exception as e:
                 if attempt == retries - 1:
                     return f"  {C.RED}✗{C.RST} {title} (error: {e})"
-                time.sleep(2 * (attempt + 1))
+                time.sleep(attempt + 1)
 
         if data:
             lyrics = data[0].get("syncedLyrics") or data[0].get("plainLyrics")
