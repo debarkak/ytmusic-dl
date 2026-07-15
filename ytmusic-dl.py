@@ -11,6 +11,9 @@ import shutil
 import subprocess
 import time
 import platform
+import json
+import urllib.request
+import urllib.parse
 from pathlib import Path
 
 
@@ -382,7 +385,8 @@ def run_download(url, audio_format, output_template, dir_mode, embed_lyrics):
             "--write-auto-subs",
             "--sub-langs", "all",
             "--embed-subs",
-            "--convert-subs", "lrc"
+            "--convert-subs", "lrc",
+            "--write-info-json",
         ])
 
     cmd.append(url)
@@ -453,6 +457,64 @@ def run_download(url, audio_format, output_template, dir_mode, embed_lyrics):
     # close the last track's block
     if header_printed:
         hr(C.CYN)
+
+    if embed_lyrics:
+        print()
+        section("fetching lyrics (lrclib)")
+        found_any = False
+        for info_file in Path.cwd().rglob("*.info.json"):
+            found_any = True
+            try:
+                with open(info_file, "r", encoding="utf-8") as f:
+                    info = json.load(f)
+                
+                artist = info.get("artist") or info.get("creator") or info.get("uploader") or ""
+                title = info.get("title") or info.get("fulltitle") or info.get("alt_title") or ""
+                
+                if not title:
+                    continue
+                
+                base_name = info_file.name[:-10]
+                audio_file = None
+                for ext in ["mp3", "opus", "m4a", "flac", "wav"]:
+                    candidate = info_file.with_name(f"{base_name}.{ext}")
+                    if candidate.exists():
+                        audio_file = candidate
+                        break
+                
+                if not audio_file:
+                    continue
+                    
+                lrc_file = audio_file.with_suffix(".lrc")
+                if lrc_file.exists():
+                    print(f"  {C.GRN}✓{C.RST} {C.DIM}{title} (already embedded/saved by yt-dlp){C.RST}")
+                    continue
+                    
+                query = urllib.parse.quote(f"{title} {artist}".strip())
+                url = f"https://lrclib.net/api/search?q={query}"
+                req = urllib.request.Request(url, headers={"User-Agent": "ytmusic-dl (https://github.com/debarkak/ytmusic-dl)"})
+                
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    data = json.loads(resp.read())
+                    if data:
+                        lyrics = data[0].get("syncedLyrics") or data[0].get("plainLyrics")
+                        if lyrics:
+                            with open(lrc_file, "w", encoding="utf-8") as lf:
+                                lf.write(lyrics)
+                            print(f"  {C.GRN}✓{C.RST} {title}")
+                        else:
+                            print(f"  {C.YLW}!{C.RST} {C.DIM}{title} (no lyrics on lrclib){C.RST}")
+                    else:
+                        print(f"  {C.YLW}!{C.RST} {C.DIM}{title} (not found on lrclib){C.RST}")
+            except Exception as e:
+                print(f"  {C.RED}✗{C.RST} {C.DIM}{info_file.name} (error: {e}){C.RST}")
+            finally:
+                try:
+                    info_file.unlink()
+                except OSError:
+                    pass
+        if not found_any:
+            print(f"  {C.DIM}no .info.json files found.{C.RST}")
 
     elapsed = int(time.time() - start_time)
     time_str = format_time(elapsed)
