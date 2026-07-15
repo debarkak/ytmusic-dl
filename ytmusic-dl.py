@@ -622,6 +622,10 @@ def run_download(url, audio_format, output_template, dir_mode, lyrics_mode, stat
     crop_filter = r"crop=min(iw\\,ih):min(iw\\,ih)"
     cmd = [
         "yt-dlp",
+        "--retries", "10",
+        "--fragment-retries", "10",
+        "--retry-sleep", "linear=1::1",
+        "--retry-sleep", "fragment:linear=1::1",
         "-f", "bestaudio",
         "--extract-audio",
         "--audio-format", audio_format,
@@ -679,6 +683,7 @@ def run_download(url, audio_format, output_template, dir_mode, lyrics_mode, stat
     )
     progress_pattern = re.compile(r"\[download\]\s+([\d\.]+)%")
     info_json_pattern = re.compile(r"\[info\] Writing video metadata as JSON to:\s+(.+?\.info\.json)")
+    retry_pattern = re.compile(r"Retrying\s+\((\d+)/(\d+)\)")
 
     header_printed = False
     last_was_progress = False
@@ -729,6 +734,16 @@ def run_download(url, audio_format, output_template, dir_mode, lyrics_mode, stat
         m_info = info_json_pattern.search(line)
         if m_info:
             current_info_json = m_info.group(1)
+
+        # detect retry
+        m_retry = retry_pattern.search(line)
+        if m_retry:
+            if state and not verbose:
+                current, total = m_retry.group(1), m_retry.group(2)
+                state.song_status = f"Retrying ({current}/{total})..."
+                render_progress(state)
+            if verbose: print(line)
+            continue
 
         # grab song name from destination / already-downloaded line
         if not header_printed:
