@@ -833,7 +833,38 @@ def fetch_artist_discography(url):
         print(f"  {C.RED}✗{C.RST} Failed to fetch artist page: {e}")
         return []
 
+    # extract api credentials for "See All" fetching
+    api_key_match = re.search(r'"INNERTUBE_API_KEY":"(.*?)"', html)
+    client_version_match = re.search(r'"clientVersion":"(.*?)"', html)
+    
+    api_key = api_key_match.group(1) if api_key_match else ""
+    client_version = client_version_match.group(1) if client_version_match else "1.20260712.05.00"
+
     options = []
+    seen_urls = set()
+    
+    def fetch_api(browse_id, params):
+        if not api_key: return None
+        api_url = f"https://music.youtube.com/youtubei/v1/browse?key={api_key}"
+        payload = {
+            "context": {
+                "client": {
+                    "clientName": "WEB_REMIX",
+                    "clientVersion": client_version
+                }
+            },
+            "browseId": browse_id,
+            "params": params
+        }
+        api_req = urllib.request.Request(api_url, data=json.dumps(payload).encode('utf-8'), headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            "Content-Type": "application/json"
+        })
+        try:
+            return json.loads(urllib.request.urlopen(api_req).read().decode('utf-8'))
+        except Exception:
+            return None
+
     for match in re.finditer(r"initialData\.push\({path:\s*'\\/browse'.*?data:\s*'(.*?)'}\)", html):
         raw_data = match.group(1)
         try:
@@ -852,23 +883,51 @@ def fetch_artist_discography(url):
                 for v in obj:
                     yield from find_shelves(v)
 
+        def extract_items(items_data, header):
+            def find_items(obj):
+                if isinstance(obj, dict):
+                    if "musicTwoRowItemRenderer" in obj:
+                        yield obj["musicTwoRowItemRenderer"]
+                    for v in obj.values():
+                        yield from find_items(v)
+                elif isinstance(obj, list):
+                    for v in obj:
+                        yield from find_items(v)
+                        
+            for renderer in find_items(items_data):
+                title = renderer.get("title", {}).get("runs", [{}])[0].get("text", "Unknown")
+                b_id = renderer.get("navigationEndpoint", {}).get("browseEndpoint", {}).get("browseId", "")
+                if b_id:
+                    if b_id.startswith("MPREb_"):
+                        item_url = f"https://music.youtube.com/browse/{b_id}"
+                    else:
+                        item_url = f"https://music.youtube.com/playlist?list={b_id}"
+                    if item_url not in seen_urls:
+                        options.append((f"{title} ({header})", item_url))
+                        seen_urls.add(item_url)
+
         shelves = list(find_shelves(data))
         for shelf in shelves:
-            header = shelf.get("header", {}).get("musicCarouselShelfBasicHeaderRenderer", {}).get("title", {}).get("runs", [{}])[0].get("text", "")
-            if header not in ["Albums", "Singles & EPs"]:
+            header_runs = shelf.get("header", {}).get("musicCarouselShelfBasicHeaderRenderer", {}).get("title", {}).get("runs", [{}])
+            if not header_runs: continue
+            header = header_runs[0].get("text", "")
+            if header not in ["Albums", "Singles & EPs", "Singles", "EPs"]:
                 continue
             
-            for item in shelf.get("contents", []):
-                renderer = item.get("musicTwoRowItemRenderer")
-                if renderer:
-                    title = renderer.get("title", {}).get("runs", [{}])[0].get("text", "Unknown")
-                    browse_id = renderer.get("navigationEndpoint", {}).get("browseEndpoint", {}).get("browseId", "")
-                    if browse_id:
-                        if browse_id.startswith("MPREb_"):
-                            url = f"https://music.youtube.com/browse/{browse_id}"
-                        else:
-                            url = f"https://music.youtube.com/playlist?list={browse_id}"
-                        options.append((f"{title} ({header})", url))
+            nav_endpoint = header_runs[0].get("navigationEndpoint", {})
+            browse_endpoint = nav_endpoint.get("browseEndpoint", {})
+            see_all_id = browse_endpoint.get("browseId")
+            params = browse_endpoint.get("params")
+            
+            if see_all_id and params:
+                see_all_data = fetch_api(see_all_id, params)
+                if see_all_data:
+                    extract_items(see_all_data, header)
+                else:
+                    extract_items(shelf.get("contents", []), header)
+            else:
+                extract_items(shelf.get("contents", []), header)
+                
     return options
 
 def get_char():
