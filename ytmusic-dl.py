@@ -12,6 +12,7 @@ import subprocess
 import time
 import platform
 import json
+import codecs
 import urllib.request
 import urllib.parse
 from pathlib import Path
@@ -255,10 +256,11 @@ def prompt_directory():
     print()
     print(f"    {C.YLW}1{C.RST})  right here {C.DIM}─{C.RST} no folder, just dumps the files")
     print(f"    {C.YLW}2{C.RST})  album folder {C.DIM}─{C.RST} named after the album/thing  {C.GRN}← recommended{C.RST}")
+    print(f"    {C.YLW}3{C.RST})  artist folder {C.DIM}─{C.RST} Artist / Album / Song")
     print()
 
     try:
-        choice = input("    [1/2, default 2]: ").strip()
+        choice = input("    [1-3, default 2]: ").strip()
     except EOFError:
         choice = ""
 
@@ -272,6 +274,9 @@ def prompt_directory():
     elif choice == "2":
         template = "%(album,playlist_title,title)s/%(track_number,playlist_index,autonumber)02d - %(title)s.%(ext)s"
         mode = "album_folder"
+    elif choice == "3":
+        template = "%(artist,uploader)s/%(album,playlist_title,title)s/%(track_number,playlist_index,autonumber)02d - %(title)s.%(ext)s"
+        mode = "artist_folder"
     else:
         print(f"    {C.YLW}!{C.RST} {C.DIM}not valid, going with album folder{C.RST}")
         template = "%(album,playlist_title,title)s/%(track_number,playlist_index,autonumber)02d - %(title)s.%(ext)s"
@@ -677,12 +682,124 @@ def run_download(url, audio_format, output_template, dir_mode, embed_lyrics, ver
     if file_count > 0:
         print(f"  {C.DIM}tracks:{C.RST} {C.BLD}{file_count}{C.RST}")
     print(f"  {C.DIM}time:{C.RST}   {C.BLD}{time_str}{C.RST}")
-    if dir_mode == "album_folder":
+    if dir_mode in ("album_folder", "artist_folder"):
         print(f"  {C.DIM}folder:{C.RST} {C.BLD}{Path.cwd()}{C.RST}")
     else:
         print(f"  {C.DIM}files:{C.RST}  {C.BLD}{Path.cwd()}{C.RST}")
     hr(C.GRN)
 
+
+# ── artist scraper ──────────────────────────
+def fetch_artist_discography(url):
+    print(f"\n  {C.DIM}Scraping artist page...{C.RST}")
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9"
+    }
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        html = urllib.request.urlopen(req).read().decode('utf-8')
+    except Exception as e:
+        print(f"  {C.RED}✗{C.RST} Failed to fetch artist page: {e}")
+        return []
+
+    options = []
+    for match in re.finditer(r"initialData\.push\({path:\s*'\\/browse'.*?data:\s*'(.*?)'}\)", html):
+        raw_data = match.group(1)
+        try:
+            decoded_data = codecs.decode(raw_data.encode('utf-8'), 'unicode_escape')
+            data = json.loads(decoded_data)
+        except Exception:
+            continue
+
+        def find_shelves(obj):
+            if isinstance(obj, dict):
+                if "musicCarouselShelfRenderer" in obj:
+                    yield obj["musicCarouselShelfRenderer"]
+                for v in obj.values():
+                    yield from find_shelves(v)
+            elif isinstance(obj, list):
+                for v in obj:
+                    yield from find_shelves(v)
+
+        shelves = list(find_shelves(data))
+        for shelf in shelves:
+            header = shelf.get("header", {}).get("musicCarouselShelfBasicHeaderRenderer", {}).get("title", {}).get("runs", [{}])[0].get("text", "")
+            if header not in ["Albums", "Singles & EPs"]:
+                continue
+            
+            for item in shelf.get("contents", []):
+                renderer = item.get("musicTwoRowItemRenderer")
+                if renderer:
+                    title = renderer.get("title", {}).get("runs", [{}])[0].get("text", "Unknown")
+                    browse_id = renderer.get("navigationEndpoint", {}).get("browseEndpoint", {}).get("browseId", "")
+                    if browse_id:
+                        options.append((f"{title} ({header})", f"https://music.youtube.com/playlist?list={browse_id}"))
+    return options
+
+def get_char():
+    try:
+        import msvcrt
+        return msvcrt.getch().decode('utf-8')
+    except ImportError:
+        import tty, termios
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setraw(sys.stdin.fileno())
+            ch = sys.stdin.read(1)
+            if ch == '\x1b':
+                ch += sys.stdin.read(2)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        return ch
+
+def interactive_select(options):
+    if not options:
+        return []
+    
+    selected = [False] * len(options)
+    cursor = 0
+    
+    # Hide cursor
+    sys.stdout.write("\033[?25l")
+    
+    def render():
+        # Move up if not first render
+        if render.rendered:
+            sys.stdout.write(f"\033[{len(options) + 2}A")
+        
+        print(f"\n  {C.BLD}Select releases to download (Space to toggle, Enter to confirm, Up/Down to navigate):{C.RST}")
+        for i, (title, _) in enumerate(options):
+            marker = f"{C.BLU}❯{C.RST}" if i == cursor else " "
+            checkbox = f"[{C.GRN}x{C.RST}]" if selected[i] else "[ ]"
+            color = C.BLD if i == cursor else C.DIM
+            print(f"  {marker} {checkbox} {color}{title}{C.RST}\033[K")
+        sys.stdout.flush()
+        render.rendered = True
+
+    render.rendered = False
+    render()
+    
+    while True:
+        c = get_char()
+        if c == '\r' or c == '\n':
+            break
+        elif c == ' ':
+            selected[cursor] = not selected[cursor]
+        elif c == '\x1b[A': # Up
+            cursor = max(0, cursor - 1)
+        elif c == '\x1b[B': # Down
+            cursor = min(len(options) - 1, cursor + 1)
+        elif c == 'q':
+            sys.stdout.write("\033[?25h\n")
+            sys.exit(0)
+        render()
+        
+    # Show cursor
+    sys.stdout.write("\033[?25h\n")
+    
+    return [options[i][1] for i, is_sel in enumerate(selected) if is_sel]
 
 # ── main ────────────────────────────────────
 def main():
@@ -704,13 +821,33 @@ def main():
         check_deps()
 
         url = prompt_url(arg_url)
+        
+        is_artist_channel = "/channel/" in url or "/c/" in url or "@" in url
+        urls_to_download = [url]
+        
+        if is_artist_channel:
+            options = fetch_artist_discography(url)
+            if options:
+                urls_to_download = interactive_select(options)
+                if not urls_to_download:
+                    print(f"\n  {C.RED}✗{C.RST} No items selected. Exiting.")
+                    sys.exit(0)
+            else:
+                print(f"  {C.YLW}!{C.RST} Could not find albums/singles natively. Falling back to regular download.")
 
         audio_format = prompt_format()
         output_template, dir_mode = prompt_directory()
         embed_lyrics = prompt_lyrics()
 
-        run_download(url, audio_format, output_template, dir_mode, embed_lyrics, verbose)
+        for idx, target_url in enumerate(urls_to_download):
+            if len(urls_to_download) > 1:
+                print(f"\n  {C.MGN}══════════════════════════════════════════{C.RST}")
+                print(f"  {C.BLD}Processing batch item {idx+1} of {len(urls_to_download)}{C.RST}")
+                print(f"  {C.MGN}══════════════════════════════════════════{C.RST}")
+            run_download(target_url, audio_format, output_template, dir_mode, embed_lyrics, verbose)
+            
     except KeyboardInterrupt:
+        sys.stdout.write("\033[?25h\n") # ensure cursor shown
         handle_interrupt(None, None)
     finally:
         reset_colors()
