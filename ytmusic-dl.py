@@ -337,9 +337,9 @@ def run_download(url, audio_format, output_template, dir_mode):
     # build the yt-dlp command
     # crop thumbnail to square using the smaller dimension
     # uses min() instead of if(gt()) to avoid single-quote quoting
-    # issues on windows — commas are backslash-escaped so yt-dlp
-    # doesn't split the filter string prematurely
-    crop_filter = "crop=min(iw\\,ih):min(iw\\,ih)"
+    # issues on windows — yt-dlp uses shlex to parse the ppa arg, so we
+    # need double backslashes here so ffmpeg gets a single escaped comma
+    crop_filter = r"crop=min(iw\\,ih):min(iw\\,ih)"
     cmd = [
         "yt-dlp",
         "-f", "bestaudio",
