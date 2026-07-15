@@ -288,20 +288,27 @@ def prompt_directory():
 
 # ── prompt lyrics ───────────────────────────
 def prompt_lyrics():
+    print(f"  {C.BLD}lyrics?{C.RST}\n")
+    print(f"    1)  none")
+    print(f"    2)  save as file")
+    print(f"    3)  embed  {C.DIM}← default{C.RST}")
+    print(f"    4)  both")
     print()
-    print(f"  {C.BLD}embed lyrics?{C.RST}")
-    print()
-    print(f"    {C.YLW}1{C.RST})  yes")
-    print(f"    {C.YLW}2{C.RST})  no {C.DIM}─{C.RST} default")
-    print()
-    try:
-        choice = input("    [1/2, default 2]: ").strip()
-    except EOFError:
-        choice = ""
-
-    embed = choice == "1"
-    print(f"  {C.GRN}✓{C.RST} {C.BLD}{'yes' if embed else 'no'}{C.RST}")
-    return embed
+    
+    choice = input(f"    {C.DIM}[1-4, default 3]: {C.RST}").strip()
+    
+    if choice == "1":
+        print(f"  {C.GRN}✓{C.RST} none\n")
+        return "none"
+    elif choice == "2":
+        print(f"  {C.GRN}✓{C.RST} save as file\n")
+        return "file"
+    elif choice == "4":
+        print(f"  {C.GRN}✓{C.RST} both\n")
+        return "both"
+    else:
+        print(f"  {C.GRN}✓{C.RST} embed\n")
+        return "embed"
 
 
 # ── build format-specific flags ─────────────
@@ -351,8 +358,8 @@ def format_time(seconds):
 
 
 # ── process lyrics ──────────────────────────
-def process_lyrics(info_json_path, embed_lyrics, state=None, verbose=False):
-    if not embed_lyrics or not info_json_path.exists():
+def process_lyrics(info_json_path, lyrics_mode, state=None, verbose=False):
+    if lyrics_mode == "none" or not info_json_path.exists():
         return None
         
     if state and not verbose:
@@ -405,21 +412,23 @@ def process_lyrics(info_json_path, embed_lyrics, state=None, verbose=False):
         if data:
             lyrics = data[0].get("syncedLyrics") or data[0].get("plainLyrics")
             if lyrics:
-                with open(lrc_file, "w", encoding="utf-8") as lf:
-                    lf.write(lyrics)
+                lrc_path = info_json_path.with_suffix("").with_suffix(".lrc")
+                with open(lrc_path, "w", encoding="utf-8") as f:
+                    f.write(lyrics)
                     
                 embedded = False
-                if mutagen:
+                if lyrics_mode in ["embed", "both"]:
                     try:
-                        ext = audio_file.suffix.lower()
+                        audio_file = lrc_path.with_suffix(ext)
+                        if not audio_file.exists():
+                            for p in lrc_path.parent.glob(f"{lrc_path.stem}*"):
+                                if p.suffix in [".mp3", ".m4a", ".flac", ".opus"]:
+                                    audio_file = p
+                                    ext = p.suffix
+                                    break
+                                    
                         if ext == ".mp3":
                             audio = ID3(audio_file)
-                            audio.delall("USLT")
-                            audio.add(USLT(encoding=Encoding.UTF8, lang='eng', desc='', text=lyrics))
-                            audio.save(v2_version=3)
-                            embedded = True
-                        elif ext == ".flac":
-                            audio = FLAC(audio_file)
                             audio["LYRICS"] = lyrics
                             audio.save()
                             embedded = True
@@ -471,6 +480,7 @@ class UIState:
         self.song_name = "..."
         self.song_pct = 0.0
         self.song_status = "Waiting"
+        self.song_eta = ""
         self.rendered_lines = 0
 
 def render_progress(state):
@@ -495,7 +505,8 @@ def render_progress(state):
     sb = int(30 * state.song_pct / 100)
     song_bar = "█" * sb + "░" * (30 - sb)
     status_color = C.DIM if state.song_status in ["Waiting", "Done"] else C.MGN
-    lines.append(f"  {C.DIM}Song:   {C.RST} [{status_color}{song_bar}{C.RST}] {state.song_pct:>5.1f}% ({state.song_status}) {C.DIM}─ {state.song_name}{C.RST}")
+    eta_str = f" ETA {state.song_eta}" if state.song_eta and state.song_status == "Downloading" else ""
+    lines.append(f"  {C.DIM}Song:   {C.RST} [{status_color}{song_bar}{C.RST}] {state.song_pct:>5.1f}% ({state.song_status}){C.DIM}{eta_str} ─ {state.song_name}{C.RST}")
     
     for line in lines:
         sys.stdout.write(f"\r{line}\033[K\n")
@@ -503,7 +514,7 @@ def render_progress(state):
     state.rendered_lines = len(lines)
 
 # ── run download ────────────────────────────
-def run_download(url, audio_format, output_template, dir_mode, embed_lyrics, state=None, verbose=False):
+def run_download(url, audio_format, output_template, dir_mode, lyrics_mode, state=None, verbose=False):
     extra_flags, thumb_convert, thumb_codec = build_format_flags(audio_format)
 
     section("downloading")
@@ -518,8 +529,9 @@ def run_download(url, audio_format, output_template, dir_mode, embed_lyrics, sta
         print(f"  {C.DIM}├ mp3 quality: VBR q0 (best){C.RST}")
         print(f"  {C.DIM}├ thumbnail format: jpg (ID3 compat){C.RST}")
     print(f"  {C.DIM}├ track numbering: from playlist index{C.RST}")
-    if embed_lyrics:
-        print(f"  {C.DIM}├ lyrics: embedded or saved as .lrc{C.RST}")
+    if lyrics_mode != "none":
+        print(f"  {C.DIM}├ lyrics: {lyrics_mode}{C.RST}")
+    print(f"  {C.DIM}├ metadata tags: cleaned{C.RST}")
     print(f"  {C.DIM}├ skip existing: yes{C.RST}")
     print(f"  {C.DIM}└ concurrent fragments: {FRAGMENTS}{C.RST}")
     print()
@@ -538,16 +550,22 @@ def run_download(url, audio_format, output_template, dir_mode, embed_lyrics, sta
         *extra_flags,
         "-o", output_template,
         "--embed-metadata",
+        "--parse-metadata", "playlist_index:%(track_number)s",
+        "--parse-metadata", "%(artist)s:%(album_artist)s",
+        "--parse-metadata", "%(track,title)s:%(title)s",
+        "--parse-metadata", "%(release_year,upload_date)s:%(date)s",
+        "--parse-metadata", "NA:%(comment)s",
+        "--parse-metadata", "NA:%(synopsis)s",
+        "--parse-metadata", "NA:%(description)s",
         "--embed-thumbnail",
         "--convert-thumbnails", thumb_convert,
         "--ppa", f"ThumbnailsConvertor+ffmpeg_o:-c:v {thumb_codec} -vf {crop_filter}",
-        "--parse-metadata", "playlist_index:%(track_number)s",
         "--no-overwrites",
         "--no-write-playlist-metafiles",
         "--concurrent-fragments", str(FRAGMENTS),
     ]
 
-    if embed_lyrics:
+    if lyrics_mode != "none":
         cmd.extend([
             "--write-subs",
             "--write-auto-subs",
@@ -609,7 +627,7 @@ def run_download(url, audio_format, output_template, dir_mode, embed_lyrics, sta
             
             # process lyrics for the PREVIOUS track before starting this new one
             if current_info_json:
-                res = process_lyrics(Path(current_info_json), embed_lyrics, state, verbose)
+                res = process_lyrics(Path(current_info_json), lyrics_mode, state, verbose)
                 if res: lyrics_results.append(res)
                 current_info_json = None
                 
@@ -664,18 +682,20 @@ def run_download(url, audio_format, output_template, dir_mode, embed_lyrics, sta
         mp = progress_pattern.search(line)
         if mp and header_printed:
             pct_str = mp.group(1)
+            eta_match = re.search(r"ETA\s+([\d:]+)", line)
+            eta = eta_match.group(1) if eta_match else ""
+            
             try:
                 pct = float(pct_str)
                 if state and not verbose:
                     state.song_pct = pct * 0.75 # 0-75%
                     state.song_status = "Downloading"
+                    if eta: state.song_eta = eta
                     render_progress(state)
                 elif verbose:
                     bar_len = 30
                     filled = int(bar_len * pct / 100)
                     bar = "█" * filled + "░" * (bar_len - filled)
-                    eta_match = re.search(r"ETA\s+([\d:]+)", line)
-                    eta = eta_match.group(1) if eta_match else ""
                     eta_str = f" ETA {eta}" if eta else ""
                     sys.stdout.write(f"\r  {C.DIM}Downloading:{C.RST} [{C.BLU}{bar}{C.RST}] {pct:>5.1f}%{C.DIM}{eta_str}{C.RST}\033[K")
                     sys.stdout.flush()
@@ -736,7 +756,7 @@ def run_download(url, audio_format, output_template, dir_mode, embed_lyrics, sta
     
     # Process the last track's lyrics (or single-video download)
     if current_info_json:
-        res = process_lyrics(Path(current_info_json), embed_lyrics, state, verbose)
+        res = process_lyrics(Path(current_info_json), lyrics_mode, state, verbose)
         if res: lyrics_results.append(res)
         current_info_json = None
         
@@ -747,7 +767,7 @@ def run_download(url, audio_format, output_template, dir_mode, embed_lyrics, sta
         hr(C.CYN)
 
     # Print final lyrics summary if applicable
-    if embed_lyrics and lyrics_results:
+    if lyrics_mode != "none" and lyrics_results:
         # Move past the fixed block
         if state and not verbose:
             sys.stdout.write(f"\033[{state.rendered_lines}B\n")
@@ -936,7 +956,7 @@ def main():
 
         audio_format = prompt_format()
         output_template, dir_mode = prompt_directory()
-        embed_lyrics = prompt_lyrics()
+        lyrics_mode = prompt_lyrics()
         
         ui_state = UIState()
         ui_state.batch_total = len(urls_to_download)
@@ -948,7 +968,7 @@ def main():
                 print(f"  {C.BLD}Processing batch item {idx+1} of {len(urls_to_download)}{C.RST}")
                 print(f"  {C.MGN}══════════════════════════════════════════{C.RST}")
                 
-            run_download(target_url, audio_format, output_template, dir_mode, embed_lyrics, ui_state, verbose)
+            run_download(target_url, audio_format, output_template, dir_mode, lyrics_mode, ui_state, verbose)
             
         if ui_state.rendered_lines > 0:
             sys.stdout.write(f"\033[{ui_state.rendered_lines}B\n")
