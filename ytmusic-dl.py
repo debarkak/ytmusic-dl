@@ -589,17 +589,17 @@ def run_download(url, audio_format, output_template, dir_mode, embed_lyrics, ver
                                     audio.save()
                                     embedded = True
                                 elif ext == ".m4a":
-                                        audio = MP4(audio_file)
-                                        audio["\xa9lyr"] = [lyrics]
-                                        audio.save()
-                                        embedded = True
-                                    elif ext == ".opus":
-                                        audio = OggOpus(audio_file)
-                                        audio["LYRICS"] = lyrics
-                                        audio.save()
-                                        embedded = True
-                                except Exception:
-                                    pass
+                                    audio = MP4(audio_file)
+                                    audio["\xa9lyr"] = [lyrics]
+                                    audio.save()
+                                    embedded = True
+                                elif ext == ".opus":
+                                    audio = OggOpus(audio_file)
+                                    audio["LYRICS"] = lyrics
+                                    audio.save()
+                                    embedded = True
+                            except Exception:
+                                pass
                                     
                             if embedded:
                                 print(f"  {C.GRN}✓{C.RST} {title} (embedded & saved as .lrc)")
