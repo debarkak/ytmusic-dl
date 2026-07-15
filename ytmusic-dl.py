@@ -563,7 +563,6 @@ def run_download(url, audio_format, output_template, dir_mode, embed_lyrics, ver
                     except Exception as e:
                         if attempt == retries - 1:
                             raise e
-                        import time
                         time.sleep(1)
 
                 if data:
