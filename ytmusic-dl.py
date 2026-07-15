@@ -345,7 +345,7 @@ def format_time(seconds):
 
 
 # ── run download ────────────────────────────
-def run_download(url, audio_format, output_template, dir_mode, embed_lyrics):
+def run_download(url, audio_format, output_template, dir_mode, embed_lyrics, verbose=False):
     extra_flags, thumb_convert, thumb_codec = build_format_flags(audio_format)
 
     section("downloading")
@@ -419,15 +419,15 @@ def run_download(url, audio_format, output_template, dir_mode, embed_lyrics):
 
     # patterns for parsing yt-dlp output
     item_pattern = re.compile(r"\[download\] Downloading item (\d+) of (\d+)")
-    # matches destination lines and "already been downloaded" lines
-    # grabs the song name from filenames like "Album/02 - Song Name.opus" or "02 - Song Name.opus"
     dest_pattern = re.compile(
         r"\[download\]\s+(?:Destination:\s*)?(?:.*?[\\/])?(?:\d+\s*-\s*)?(.+?)\.(mp3|opus|m4a|flac|wav)"
     )
+    progress_pattern = re.compile(r"\[download\]\s+([\d\.]+)%")
 
     current_track = 0
     total_tracks = 0
     header_printed = False
+    last_was_progress = False
 
     for line in process.stdout:
         line = line.rstrip("\n")
@@ -435,6 +435,7 @@ def run_download(url, audio_format, output_template, dir_mode, embed_lyrics):
         # detect new track: [download] Downloading item X of Y
         m = item_pattern.search(line)
         if m:
+            if last_was_progress: print(); last_was_progress = False
             # close the previous track's block
             if header_printed:
                 hr(C.CYN)
@@ -442,25 +443,72 @@ def run_download(url, audio_format, output_template, dir_mode, embed_lyrics):
             current_track = int(m.group(1))
             total_tracks = int(m.group(2))
             header_printed = False
-            print(line)
+            if verbose: print(line)
             continue
 
         # grab song name from destination / already-downloaded line
-        if not header_printed and current_track > 0:
+        if not header_printed:
             m2 = dest_pattern.search(line)
             if m2:
+                if last_was_progress: print(); last_was_progress = False
                 song_name = m2.group(1)
+                track_info = f"  {C.YLW}[{current_track}/{total_tracks}]{C.RST}" if total_tracks > 0 else ""
                 hr(C.CYN)
-                print(f"  {C.MGN}{C.BLD}♫  {song_name}{C.RST}  {C.YLW}[{current_track}/{total_tracks}]{C.RST}")
+                print(f"  {C.MGN}{C.BLD}♫  {song_name}{C.RST}{track_info}")
                 hr(C.CYN)
                 header_printed = True
-                print(line)
+                if verbose: print(line)
                 continue
 
-        # pass everything else through
-        print(line)
+        # grab progress
+        mp = progress_pattern.search(line)
+        if mp and header_printed:
+            pct_str = mp.group(1)
+            try:
+                pct = float(pct_str)
+                bar_len = 30
+                filled = int(bar_len * pct / 100)
+                bar = "█" * filled + "░" * (bar_len - filled)
+                eta_match = re.search(r"ETA\s+([\d:]+)", line)
+                eta = eta_match.group(1) if eta_match else ""
+                eta_str = f" ETA {eta}" if eta else ""
+                
+                sys.stdout.write(f"\r  {C.DIM}Downloading:{C.RST} [{C.BLU}{bar}{C.RST}] {pct:>5.1f}%{C.DIM}{eta_str}{C.RST}\033[K")
+                sys.stdout.flush()
+                last_was_progress = True
+            except ValueError:
+                pass
+            if verbose:
+                print()
+                print(line)
+                last_was_progress = False
+            continue
+            
+        # print errors or warnings
+        if "ERROR:" in line or "WARNING:" in line:
+            if last_was_progress: print(); last_was_progress = False
+            print(f"  {C.YLW}{line}{C.RST}")
+            continue
+
+        # post-processing status indicators
+        if not verbose and ("[ExtractAudio]" in line or "[EmbedThumbnail]" in line or "[Metadata]" in line):
+            if "[ExtractAudio]" in line:
+                sys.stdout.write(f"\r  {C.DIM}Converting audio...{C.RST}\033[K")
+            elif "[Metadata]" in line:
+                sys.stdout.write(f"\r  {C.DIM}Adding metadata...{C.RST}\033[K")
+            elif "[EmbedThumbnail]" in line:
+                sys.stdout.write(f"\r  {C.DIM}Embedding thumbnail...{C.RST}\033[K")
+            sys.stdout.flush()
+            last_was_progress = True
+            continue
+
+        # pass everything else through if verbose
+        if verbose:
+            if last_was_progress: print(); last_was_progress = False
+            print(line)
 
     process.wait()
+    if last_was_progress: print(); last_was_progress = False
     exit_code = process.returncode
 
     # close the last track's block
@@ -586,23 +634,30 @@ def run_download(url, audio_format, output_template, dir_mode, embed_lyrics):
 
 # ── main ────────────────────────────────────
 def main():
-    if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help"):
-        print(f"Usage: {sys.argv[0]} [URL]")
-        sys.exit(0)
+    arg_url = None
+    verbose = False
+    
+    for arg in sys.argv[1:]:
+        if arg in ("-h", "--help"):
+            print(f"Usage: {sys.argv[0]} [-v] [URL]")
+            sys.exit(0)
+        elif arg in ("-v", "--verbose"):
+            verbose = True
+        else:
+            if arg_url is None:
+                arg_url = arg
 
     try:
         banner()
         check_deps()
 
-        # grab url from args if provided
-        arg_url = sys.argv[1] if len(sys.argv) > 1 else None
         url = prompt_url(arg_url)
 
         audio_format = prompt_format()
         output_template, dir_mode = prompt_directory()
         embed_lyrics = prompt_lyrics()
 
-        run_download(url, audio_format, output_template, dir_mode, embed_lyrics)
+        run_download(url, audio_format, output_template, dir_mode, embed_lyrics, verbose)
     except KeyboardInterrupt:
         handle_interrupt(None, None)
     finally:
