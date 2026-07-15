@@ -84,6 +84,7 @@ class C:
     YLW = "\033[1;33m"
     CYN = "\033[0;36m"
     MGN = "\033[0;35m"
+    BLU = "\033[0;34m"
     BLD = "\033[1m"
     DIM = "\033[2m"
     RST = "\033[0m"
@@ -91,7 +92,7 @@ class C:
 
 # disable colors if not a tty (piping, redirects, etc.)
 if not sys.stdout.isatty():
-    for attr in ("RED", "GRN", "YLW", "CYN", "MGN", "BLD", "DIM", "RST"):
+    for attr in ("RED", "GRN", "YLW", "CYN", "MGN", "BLU", "BLD", "DIM", "RST"):
         setattr(C, attr, "")
 
 
@@ -552,31 +553,42 @@ def run_download(url, audio_format, output_template, dir_mode, embed_lyrics, ver
                 url = f"https://lrclib.net/api/search?q={query}"
                 req = urllib.request.Request(url, headers={"User-Agent": "ytmusic-dl (https://github.com/debarkak/ytmusic-dl)"})
                 
-                with urllib.request.urlopen(req, timeout=10) as resp:
-                    data = json.loads(resp.read())
-                    if data:
-                        lyrics = data[0].get("syncedLyrics") or data[0].get("plainLyrics")
-                        if lyrics:
-                            with open(lrc_file, "w", encoding="utf-8") as lf:
-                                lf.write(lyrics)
-                                
-                            embedded = False
-                            if mutagen:
-                                try:
-                                    ext = audio_file.suffix.lower()
-                                    if ext == ".mp3":
-                                        audio = ID3(audio_file)
-                                        # Remove old unsynced lyrics if present to avoid duplicates
-                                        audio.delall("USLT")
-                                        audio.add(USLT(encoding=Encoding.UTF8, lang='eng', desc='', text=lyrics))
-                                        audio.save(v2_version=3)
-                                        embedded = True
-                                    elif ext == ".flac":
-                                        audio = FLAC(audio_file)
-                                        audio["LYRICS"] = lyrics
-                                        audio.save()
-                                        embedded = True
-                                    elif ext == ".m4a":
+                retries = 2
+                data = None
+                for attempt in range(retries):
+                    try:
+                        with urllib.request.urlopen(req, timeout=10) as resp:
+                            data = json.loads(resp.read())
+                        break
+                    except Exception as e:
+                        if attempt == retries - 1:
+                            raise e
+                        import time
+                        time.sleep(1)
+
+                if data:
+                    lyrics = data[0].get("syncedLyrics") or data[0].get("plainLyrics")
+                    if lyrics:
+                        with open(lrc_file, "w", encoding="utf-8") as lf:
+                            lf.write(lyrics)
+                            
+                        embedded = False
+                        if mutagen:
+                            try:
+                                ext = audio_file.suffix.lower()
+                                if ext == ".mp3":
+                                    audio = ID3(audio_file)
+                                    # Remove old unsynced lyrics if present to avoid duplicates
+                                    audio.delall("USLT")
+                                    audio.add(USLT(encoding=Encoding.UTF8, lang='eng', desc='', text=lyrics))
+                                    audio.save(v2_version=3)
+                                    embedded = True
+                                elif ext == ".flac":
+                                    audio = FLAC(audio_file)
+                                    audio["LYRICS"] = lyrics
+                                    audio.save()
+                                    embedded = True
+                                elif ext == ".m4a":
                                         audio = MP4(audio_file)
                                         audio["\xa9lyr"] = [lyrics]
                                         audio.save()
