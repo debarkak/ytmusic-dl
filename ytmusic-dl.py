@@ -734,7 +734,11 @@ def fetch_artist_discography(url):
                     title = renderer.get("title", {}).get("runs", [{}])[0].get("text", "Unknown")
                     browse_id = renderer.get("navigationEndpoint", {}).get("browseEndpoint", {}).get("browseId", "")
                     if browse_id:
-                        options.append((f"{title} ({header})", f"https://music.youtube.com/playlist?list={browse_id}"))
+                        if browse_id.startswith("MPREb_"):
+                            url = f"https://music.youtube.com/browse/{browse_id}"
+                        else:
+                            url = f"https://music.youtube.com/playlist?list={browse_id}"
+                        options.append((f"{title} ({header})", url))
     return options
 
 def get_char():
