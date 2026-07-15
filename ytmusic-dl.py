@@ -359,10 +359,10 @@ def format_time(seconds):
 
 # ── process lyrics ──────────────────────────
 def process_lyrics(info_json_path, lyrics_mode, state=None, verbose=False):
-    if lyrics_mode == "none" or not info_json_path.exists():
+    if not info_json_path.exists():
         return None
         
-    if state and not verbose:
+    if state and not verbose and lyrics_mode != "none":
         state.song_pct = 95.0
         state.song_status = "Fetching lyrics..."
         render_progress(state)
@@ -379,13 +379,45 @@ def process_lyrics(info_json_path, lyrics_mode, state=None, verbose=False):
             
         base_name = info_json_path.name[:-10]
         audio_file = None
-        for ext in ["mp3", "opus", "m4a", "flac", "wav"]:
-            candidate = info_json_path.with_name(f"{base_name}.{ext}")
+        current_ext = None
+        for ext in [".mp3", ".opus", ".m4a", ".flac", ".wav"]:
+            candidate = info_json_path.with_name(f"{base_name}{ext}")
             if candidate.exists():
                 audio_file = candidate
+                current_ext = ext
                 break
                 
         if not audio_file:
+            return None
+            
+        # --- Metadata Cleanup ---
+        try:
+            if current_ext == ".mp3":
+                audio = ID3(audio_file)
+                keys_to_del = [k for k in audio.keys() if k.startswith("COMM") or k.startswith("TXXX:purl") or k.startswith("TXXX:comment") or k.startswith("TXXX:synopsis") or k.startswith("TXXX:description")]
+                for k in keys_to_del:
+                    audio.pop(k, None)
+                audio.save(v2_version=3)
+            elif current_ext == ".m4a":
+                audio = MP4(audio_file)
+                if "\xa9cmt" in audio: del audio["\xa9cmt"]
+                if "----:com.apple.iTunes:purl" in audio: del audio["----:com.apple.iTunes:purl"]
+                if "\xa9des" in audio: del audio["\xa9des"]
+                audio.save()
+            elif current_ext == ".flac":
+                audio = FLAC(audio_file)
+                for k in ["COMMENT", "PURL", "DESCRIPTION", "SYNOPSIS"]:
+                    if k in audio: del audio[k]
+                audio.save()
+            elif current_ext == ".opus":
+                audio = OggOpus(audio_file)
+                for k in ["COMMENT", "PURL", "DESCRIPTION", "SYNOPSIS"]:
+                    if k in audio: del audio[k]
+                audio.save()
+        except Exception:
+            pass
+            
+        if lyrics_mode == "none":
             return None
             
         lrc_file = audio_file.with_suffix(".lrc")
@@ -419,31 +451,24 @@ def process_lyrics(info_json_path, lyrics_mode, state=None, verbose=False):
                 embedded = False
                 if lyrics_mode in ["embed", "both"]:
                     try:
-                        audio_file = lrc_path.with_suffix(ext)
-                        if not audio_file.exists():
-                            for p in lrc_path.parent.glob(f"{lrc_path.stem}*"):
-                                if p.suffix in [".mp3", ".m4a", ".flac", ".opus"]:
-                                    audio_file = p
-                                    ext = p.suffix
-                                    break
-                                    
-                        if ext == ".mp3":
+                        # use the current_ext we found earlier!
+                        if current_ext == ".mp3":
                             audio = ID3(audio_file)
                             audio.delall("USLT")
                             audio.add(USLT(encoding=Encoding.UTF8, lang='eng', desc='', text=lyrics))
                             audio.save(v2_version=3)
                             embedded = True
-                        elif ext == ".m4a":
+                        elif current_ext == ".m4a":
                             audio = MP4(audio_file)
                             audio["\xa9lyr"] = [lyrics]
                             audio.save()
                             embedded = True
-                        elif ext == ".flac":
+                        elif current_ext == ".flac":
                             audio = FLAC(audio_file)
                             audio["LYRICS"] = lyrics
                             audio.save()
                             embedded = True
-                        elif ext == ".opus":
+                        elif current_ext == ".opus":
                             audio = OggOpus(audio_file)
                             audio["LYRICS"] = lyrics
                             audio.save()
@@ -458,11 +483,19 @@ def process_lyrics(info_json_path, lyrics_mode, state=None, verbose=False):
                         pass
                             
                 if lyrics_mode == "embed":
-                    if verbose: print(f"  {C.GRN}✓{C.RST} {C.DIM}Lyrics embedded{C.RST}")
-                    res = f"  {C.GRN}✓{C.RST} {title} (embedded)"
+                    if embedded:
+                        if verbose: print(f"  {C.GRN}✓{C.RST} {C.DIM}Lyrics embedded{C.RST}")
+                        res = f"  {C.GRN}✓{C.RST} {title} (embedded)"
+                    else:
+                        if verbose: print(f"  {C.RED}✗{C.RST} {C.DIM}Lyrics embed failed{C.RST}")
+                        res = f"  {C.RED}✗{C.RST} {title} (embed failed)"
                 elif lyrics_mode == "both":
-                    if verbose: print(f"  {C.GRN}✓{C.RST} {C.DIM}Lyrics embedded & saved as .lrc{C.RST}")
-                    res = f"  {C.GRN}✓{C.RST} {title} (embedded & saved as .lrc)"
+                    if embedded:
+                        if verbose: print(f"  {C.GRN}✓{C.RST} {C.DIM}Lyrics embedded & saved as .lrc{C.RST}")
+                        res = f"  {C.GRN}✓{C.RST} {title} (embedded & saved as .lrc)"
+                    else:
+                        if verbose: print(f"  {C.RED}✗{C.RST} {C.DIM}Lyrics saved, but embed failed{C.RST}")
+                        res = f"  {C.RED}✗{C.RST} {title} (saved, embed failed)"
                 else:
                     if verbose: print(f"  {C.GRN}✓{C.RST} {C.DIM}Lyrics saved as .lrc{C.RST}")
                     res = f"  {C.GRN}✓{C.RST} {title} (saved as .lrc)"
