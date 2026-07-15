@@ -894,21 +894,43 @@ def interactive_select(options):
     
     selected = [False] * len(options)
     cursor = 0
+    window_start = 0
+    max_display = 15
     
     # Hide cursor
     sys.stdout.write("\033[?25l")
     
     def render():
+        nonlocal window_start
+        
+        # Adjust window
+        if cursor < window_start:
+            window_start = cursor
+        elif cursor >= window_start + max_display:
+            window_start = cursor - max_display + 1
+            
+        display_options = options[window_start:window_start + max_display]
+        
         # Move up if not first render
         if render.rendered:
-            sys.stdout.write(f"\033[{len(options) + 2}A")
+            sys.stdout.write(f"\033[{len(display_options) + 2}A")
         
         print(f"\n  {C.BLD}Select releases to download (Space to toggle, Enter to confirm, Up/Down to navigate):{C.RST}")
-        for i, (title, _) in enumerate(options):
-            marker = f"{C.BLU}❯{C.RST}" if i == cursor else " "
-            checkbox = f"[{C.GRN}x{C.RST}]" if selected[i] else "[ ]"
-            color = C.BLD if i == cursor else C.DIM
-            print(f"  {marker} {checkbox} {color}{title}{C.RST}\033[K")
+        for i, (title, _) in enumerate(display_options):
+            actual_idx = window_start + i
+            marker = f"{C.BLU}❯{C.RST}" if actual_idx == cursor else " "
+            checkbox = f"[{C.GRN}x{C.RST}]" if selected[actual_idx] else "[ ]"
+            color = C.BLD if actual_idx == cursor else C.DIM
+            
+            # Show scrolling indicators
+            if i == 0 and window_start > 0:
+                prefix = f"{C.YLW}↑{C.RST} "
+            elif i == len(display_options) - 1 and window_start + len(display_options) < len(options):
+                prefix = f"{C.YLW}↓{C.RST} "
+            else:
+                prefix = "  "
+                
+            print(f"  {marker} {checkbox} {prefix}{color}{title}{C.RST}\033[K")
         sys.stdout.flush()
         render.rendered = True
 
