@@ -17,6 +17,7 @@ import urllib.request
 import urllib.parse
 from pathlib import Path
 import threading
+import random
 
 try:
     import mutagen
@@ -456,7 +457,7 @@ def process_lyrics(info_json_path, lyrics_mode, state=None, verbose=False):
         url = f"https://lrclib.net/api/search?q={query}"
         req = urllib.request.Request(url, headers={"User-Agent": "ytmusic-dl (https://github.com/debarkak/ytmusic-dl)"})
         
-        retries = 10
+        retries = 25
         data = None
         for attempt in range(retries):
             if state and not verbose and lyrics_mode != "none":
@@ -479,7 +480,7 @@ def process_lyrics(info_json_path, lyrics_mode, state=None, verbose=False):
             except Exception as e:
                 if attempt == retries - 1:
                     return f"  {C.RED}✗{C.RST} {title} (error: {e})"
-                time.sleep(attempt + 1)
+                time.sleep(random.randint(3, 16))
 
         if data:
             lyrics = data[0].get("syncedLyrics") or data[0].get("plainLyrics")
@@ -571,6 +572,7 @@ class UIState:
         self.song_eta = ""
         self.rendered_lines = 0
         self.album_start_time = 0.0
+        self.album_eta_seconds = None
         self.lock = threading.Lock()
         self.is_active = True
 
@@ -609,12 +611,21 @@ def render_progress(state):
         ab = int(30 * album_fraction)
         album_bar = "█" * ab + "░" * (30 - ab)
         
+        is_indeterminate = state.song_status not in ["Downloading", "Done", "Converting audio", "Adding metadata", "Embedding thumbnail"]
+        
         album_eta_str = ""
         if state.album_total > 0 and getattr(state, "album_start_time", 0.0) > 0 and 0 < album_fraction < 1.0:
-            elapsed = time.time() - state.album_start_time
-            remaining_seconds = (elapsed / album_fraction) - elapsed
-            if remaining_seconds > 0:
-                mins, secs = divmod(int(remaining_seconds), 60)
+            if not is_indeterminate:
+                elapsed = time.time() - state.album_start_time
+                raw_remaining = (elapsed / album_fraction) - elapsed
+                if raw_remaining > 0:
+                    if state.album_eta_seconds is None:
+                        state.album_eta_seconds = raw_remaining
+                    else:
+                        state.album_eta_seconds = 0.95 * state.album_eta_seconds + 0.05 * raw_remaining
+            
+            if getattr(state, "album_eta_seconds", None) is not None:
+                mins, secs = divmod(int(state.album_eta_seconds), 60)
                 hrs, mins = divmod(mins, 60)
                 if hrs > 0:
                     album_eta_str = f" ETA {hrs:02d}:{mins:02d}:{secs:02d}"
@@ -624,8 +635,6 @@ def render_progress(state):
         lines.append(f"  {C.DIM}Album:  {C.RST} [{C.CYN}{album_bar}{C.RST}] {album_pct:>5.1f}% ─ {state.album_track}/{state.album_total} tracks{C.DIM}{album_eta_str}{C.RST}")
         
         # Song
-        is_indeterminate = state.song_status not in ["Downloading", "Done", "Converting audio", "Adding metadata", "Embedding thumbnail"]
-        
         if is_indeterminate:
             # Bouncing animation (30 chars wide, 3 char block)
             pos = int(time.time() * 20) % 54
@@ -683,10 +692,10 @@ def run_download(url, audio_format, output_template, dir_mode, lyrics_mode, stat
         "yt-dlp",
         "--ignore-errors",
         "--extractor-args", "youtube:player_client=android_vr,web",
-        "--retries", "10",
-        "--fragment-retries", "10",
-        "--retry-sleep", "linear=1::1",
-        "--retry-sleep", "fragment:linear=1::1",
+        "--retries", "25",
+        "--fragment-retries", "25",
+        "--retry-sleep", "3-16",
+        "--retry-sleep", "fragment:3-16",
         "-f", "bestaudio",
         "--extract-audio",
         "--audio-format", audio_format,
