@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+ltipl#!/usr/bin/env python3
 # ─────────────────────────────────────────────
 #  ytmusic-dl.py
 #  deps: yt-dlp, ffmpeg
@@ -622,6 +622,8 @@ def run_download(url, audio_format, output_template, dir_mode, lyrics_mode, stat
     crop_filter = r"crop=min(iw\\,ih):min(iw\\,ih)"
     cmd = [
         "yt-dlp",
+        "--ignore-errors",
+        "--extractor-args", "youtube:player_client=ios,web",
         "--retries", "10",
         "--fragment-retries", "10",
         "--retry-sleep", "linear=1::1",
@@ -878,10 +880,9 @@ def run_download(url, audio_format, output_template, dir_mode, lyrics_mode, stat
 
     if exit_code != 0:
         hr(C.RED)
-        print(f"  {C.RED}{C.BLD}✗ yt-dlp failed{C.RST} {C.DIM}(exit code {exit_code}){C.RST}")
-        print(f"  {C.DIM}check the url and try again{C.RST}")
+        print(f"  {C.RED}{C.BLD}! yt-dlp encountered errors{C.RST} {C.DIM}(exit code {exit_code}){C.RST}")
+        print(f"  {C.DIM}some tracks may have failed (e.g., 403 Forbidden). Continuing to next batch...{C.RST}")
         hr(C.RED)
-        sys.exit(exit_code)
 
     file_count = count_files(audio_format, dir_mode)
 
