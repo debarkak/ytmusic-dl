@@ -1178,7 +1178,7 @@ def interactive_select(options):
         if getattr(render, "rendered", False):
             sys.stdout.write(f"\033[{max_display + 3}A")
         
-        print(f"\n  {C.BLD}Select releases to download (Space to toggle, Enter to confirm, / to search, Up/Down to navigate):{C.RST}\033[K")
+        print(f"\n  {C.BLD}Select releases to download (Space to toggle, 'a' to select all, Enter to confirm, / to search, Up/Down to navigate):{C.RST}\033[K")
         if search_mode or search_query:
             cursor_char = "█" if search_mode else ""
             print(f"  {C.CYN}Search:{C.RST} {search_query}{cursor_char}\033[K")
@@ -1244,6 +1244,12 @@ def interactive_select(options):
                 filtered_indices = [i for i, (title, _) in enumerate(options) if search_query.lower() in title.lower()]
                 if filtered_indices:
                     cursor = min(len(filtered_indices) - 1, cursor + 1)
+            elif c.lower() == 'a':
+                filtered_indices = [i for i, (title, _) in enumerate(options) if search_query.lower() in title.lower()]
+                if filtered_indices:
+                    all_selected = all(selected[i] for i in filtered_indices)
+                    for i in filtered_indices:
+                        selected[i] = not all_selected
             elif c == 'q':
                 sys.stdout.write("\033[?25h\n")
                 sys.exit(0)
