@@ -1,36 +1,50 @@
 # ytmusic-dl
 
-> [!WARNING]  
-> **Disclaimer:** This tool was created heavily using AI to save time. It was originally built just for my personal use, but I decided to open-source it. Use at your own discretion!
+> [!WARNING]
+> **disclaimer:** this tool was built heavily using ai to save time. it started as something i made for myself, but i eventually decided to open-source it. ai helped write a lot of the code, but everything has been tested, tweaked and broken enough times that i'm comfortable putting it out here.
 
-A zero-BS, interactive tool for ripping YouTube Music playlists and albums with proper metadata, square album art, and perfectly-synced lyrics.
+a simple tool for downloading music from youtube music with proper metadata, square album art and synced lyrics.
 
-### Usage
+### usage
+
 ```bash
-python3 ytmusic-dl.py [URL]
+python3 ytmusic-dl.py [url]
 ```
-The script will interactively ask you for your preferred format (opus, mp3, flac, etc), output location, and if you want to embed synced lyrics.
 
-#### Library Sync Mode
+run it and it'll ask what format you want, where to save everything and whether to embed synced lyrics.
+
+#### sync
+
 ```bash
 python3 ytmusic-dl.py --sync
 ```
-When you download albums, a tiny `.ytmusic-dl.json` state file is generated inside the directory. If you ever lose connection, close the terminal, or encounter 403 Forbidden errors midway through downloading a discography, simply run `--sync`.
-The script will recursively scan your entire working directory for these tracker files, automatically CD into those specific folders, and execute a surgical `yt-dlp` update pass to securely resume downloading any missing or corrupted tracks using your saved format settings! 
 
-### Requirements
-- Python 3.7+
-- `yt-dlp` and `ffmpeg` in your PATH.
-- *(Optional)* `mutagen` via pip for embedding lyrics directly into audio tags.
+if a download fails or you stop it halfway through, run this. it'll scan for `.ytmusic-dl.json` files and resume whatever was left.
 
-### Features
-- Native support for **opus**, **mp3**, **m4a**, **flac**, and **wav**.
-- Perfect metadata tagging (track numbers, artists, synced `.lrc` lyrics from LRCLIB).
-- **Interactive Search:** Press `/` while selecting discography albums to instantly filter via a live search bar.
-- Auto-crops YouTube thumbnails into perfectly square album covers.
-- **50K-Scale Durability:** Multi-threaded fragment downloading, resilient file descriptor management, global SIGINT zombie-process tracking, and end-of-batch failed-download summaries.
-- A beautiful, premium UI featuring macOS-style loading progress bars and fully fractional dynamic percentage readouts.
+#### organize
 
-### License
-[GPL-3.0](LICENSE)
+```bash
+python3 ytmusic-dl.py --organize
+```
 
+if your library ends up full of comma-separated artist names, this cleans them up automatically.
+
+### requirements
+
+- python 3.7+
+- `yt-dlp` and `ffmpeg`
+- *(optional)* `mutagen` for embedding lyrics into supported formats
+
+### features
+
+- downloads tracks, albums, playlists and artist discographies
+- opus, mp3, m4a, flac and wav output
+- proper metadata and synced `.lrc` lyrics
+- press `/` to search while selecting albums
+- automatically crops thumbnails into square album art
+- resumes interrupted downloads with `--sync`
+- clean progress bars with eta
+
+### license
+
+[gpl-3.0](LICENSE)
