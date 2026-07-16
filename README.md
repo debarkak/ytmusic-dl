@@ -1,7 +1,9 @@
 # ytmusic-dl
 
 > [!WARNING]
-> **disclaimer:** this tool was built heavily using ai to save time. it started as something i made for myself, but i eventually decided to open-source it. ai helped write a lot of the code, but everything has been tested, tweaked and broken enough times that i'm comfortable putting it out here.
+> **disclaimer:** this tool was built heavily with ai to save time. it started as something i made for myself, but i eventually decided to open-source it. ai helped write a lot of the code, but everything has been tested, tweaked and broken enough times that i'm comfortable putting it out here.
+>
+> i might make future changes myself instead of relying on ai. if you run into any issues or have ideas for improvements, feel free to open an issue or a pull request. i'll happily take a look.
 
 a simple tool for downloading music from youtube music with proper metadata, square album art and synced lyrics.
 
