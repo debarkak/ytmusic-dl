@@ -1018,7 +1018,7 @@ def run_download(url, audio_format, output_template, dir_mode, lyrics_mode, stat
 def fetch_artist_discography(url):
     print(f"\n  {C.DIM}Scraping artist page...{C.RST}")
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "Accept-Language": "en-US,en;q=0.9"
     }
     req = urllib.request.Request(url, headers=headers)
@@ -1033,6 +1033,23 @@ def fetch_artist_discography(url):
     artist_name = artist_name_match.group(1) if artist_name_match else None
     if artist_name and artist_name.endswith(" - YouTube Music"):
         artist_name = artist_name[:-16]
+    
+    # validate: if the title is garbage (e.g. "undefined", "Your browser is deprecated"),
+    # fall back to yt-dlp's own uploader extraction
+    bad_titles = {"undefined", "your browser is deprecated", "youtube music", ""}
+    if not artist_name or artist_name.strip().lower().rstrip(".") in bad_titles:
+        try:
+            fallback = subprocess.run(
+                ["yt-dlp", "--print", "uploader", "--playlist-items", "1", url],
+                capture_output=True, text=True, timeout=30
+            )
+            fb_name = fallback.stdout.strip().split("\n")[0] if fallback.stdout.strip() else None
+            if fb_name:
+                artist_name = fb_name
+                print(f"  {C.DIM}(artist name from yt-dlp: {artist_name}){C.RST}")
+        except Exception:
+            pass
+
 
     # extract api credentials for "See All" fetching
     api_key_match = re.search(r'"INNERTUBE_API_KEY":"(.*?)"', html)
