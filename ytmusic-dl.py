@@ -1129,7 +1129,7 @@ def fetch_artist_discography(url):
             else:
                 extract_items(shelf.get("contents", []), header)
                 
-    return options
+    return artist_name, options
 
 def get_char():
     try:
