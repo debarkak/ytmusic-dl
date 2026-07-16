@@ -1026,7 +1026,13 @@ def fetch_artist_discography(url):
         html = urllib.request.urlopen(req).read().decode('utf-8')
     except Exception as e:
         print(f"  {C.RED}✗{C.RST} Failed to fetch artist page: {e}")
-        return []
+        return None, []
+
+    # extract artist name from og:title
+    artist_name_match = re.search(r'<meta property="og:title" content="(.*?)"', html)
+    artist_name = artist_name_match.group(1) if artist_name_match else None
+    if artist_name and artist_name.endswith(" - YouTube Music"):
+        artist_name = artist_name[:-16]
 
     # extract api credentials for "See All" fetching
     api_key_match = re.search(r'"INNERTUBE_API_KEY":"(.*?)"', html)
