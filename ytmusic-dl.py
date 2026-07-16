@@ -16,6 +16,7 @@ import codecs
 import urllib.request
 import urllib.parse
 from pathlib import Path
+import threading
 
 try:
     import mutagen
@@ -555,29 +556,48 @@ class UIState:
         self.song_eta = ""
         self.rendered_lines = 0
         self.album_start_time = 0.0
+        self.lock = threading.Lock()
+        self.is_active = True
+
+def animate_progress(state):
+    while state.is_active:
+        if state.song_status not in ["Downloading", "Done", "Converting audio", "Adding metadata", "Embedding thumbnail"]:
+            render_progress(state)
+        time.sleep(0.05)
 
 def render_progress(state):
-    # Hide cursor
-    sys.stdout.write("\033[?25l")
-    
-    if state.rendered_lines > 0:
-        sys.stdout.write(f"\033[{state.rendered_lines}A")
+    with state.lock:
+        # Hide cursor
+        sys.stdout.write("\033[?25l")
         
-    lines = []
-    
-    batch_pct = (state.batch_idx / state.batch_total * 100) if state.batch_total > 0 else 0
-    bb = int(30 * batch_pct / 100)
-    batch_bar = "█" * bb + "░" * (30 - bb)
-    lines.append(f"  {C.DIM}Overall:{C.RST} [{C.BLU}{batch_bar}{C.RST}] {state.batch_idx}/{state.batch_total} batches")
-    
-    album_eta_str = ""
-    if state.album_total > 0 and getattr(state, "album_start_time", 0.0) > 0:
+        if state.rendered_lines > 0:
+            sys.stdout.write(f"\033[{state.rendered_lines}A")
+            
+        lines = []
+        
+        # Calculate dynamic fractions
         completed_tracks = max(0, state.album_track - 1)
         song_fraction = state.song_pct / 100.0
-        total_fraction = (completed_tracks + song_fraction) / state.album_total
-        if 0 < total_fraction < 1.0:
+        album_fraction = (completed_tracks + song_fraction) / state.album_total if state.album_total > 0 else 0.0
+        
+        completed_batches = max(0, state.batch_idx - 1)
+        overall_fraction = (completed_batches + album_fraction) / state.batch_total if state.batch_total > 0 else 0.0
+        
+        # Overall
+        overall_pct = overall_fraction * 100
+        bb = int(30 * overall_fraction)
+        batch_bar = "█" * bb + "░" * (30 - bb)
+        lines.append(f"  {C.DIM}Overall:{C.RST} [{C.BLU}{batch_bar}{C.RST}] {overall_pct:>5.1f}% ─ {state.batch_idx}/{state.batch_total} batches")
+        
+        # Album
+        album_pct = album_fraction * 100
+        ab = int(30 * album_fraction)
+        album_bar = "█" * ab + "░" * (30 - ab)
+        
+        album_eta_str = ""
+        if state.album_total > 0 and getattr(state, "album_start_time", 0.0) > 0 and 0 < album_fraction < 1.0:
             elapsed = time.time() - state.album_start_time
-            remaining_seconds = (elapsed / total_fraction) - elapsed
+            remaining_seconds = (elapsed / album_fraction) - elapsed
             if remaining_seconds > 0:
                 mins, secs = divmod(int(remaining_seconds), 60)
                 hrs, mins = divmod(mins, 60)
@@ -585,22 +605,32 @@ def render_progress(state):
                     album_eta_str = f" ETA {hrs:02d}:{mins:02d}:{secs:02d}"
                 else:
                     album_eta_str = f" ETA {mins:02d}:{secs:02d}"
-                    
-    album_pct = (state.album_track / state.album_total * 100) if state.album_total > 0 else 0
-    ab = int(30 * album_pct / 100)
-    album_bar = "█" * ab + "░" * (30 - ab)
-    lines.append(f"  {C.DIM}Album:  {C.RST} [{C.CYN}{album_bar}{C.RST}] {state.album_track}/{state.album_total} tracks{C.DIM}{album_eta_str}{C.RST}")
-    
-    sb = int(30 * state.song_pct / 100)
-    song_bar = "█" * sb + "░" * (30 - sb)
-    status_color = C.DIM if state.song_status in ["Waiting", "Done"] else C.MGN
-    eta_str = f" ETA {state.song_eta}" if state.song_eta and state.song_status == "Downloading" else ""
-    lines.append(f"  {C.DIM}Song:   {C.RST} [{status_color}{song_bar}{C.RST}] {state.song_pct:>5.1f}% ({state.song_status}){C.DIM}{eta_str} ─ {state.song_name}{C.RST}")
-    
-    for line in lines:
-        sys.stdout.write(f"\r{line}\033[K\n")
-    sys.stdout.flush()
-    state.rendered_lines = len(lines)
+                        
+        lines.append(f"  {C.DIM}Album:  {C.RST} [{C.CYN}{album_bar}{C.RST}] {album_pct:>5.1f}% ─ {state.album_track}/{state.album_total} tracks{C.DIM}{album_eta_str}{C.RST}")
+        
+        # Song
+        is_indeterminate = state.song_status not in ["Downloading", "Done", "Converting audio", "Adding metadata", "Embedding thumbnail"]
+        
+        if is_indeterminate:
+            # Bouncing animation (30 chars wide, 3 char block)
+            pos = int(time.time() * 20) % 54
+            if pos >= 27:
+                pos = 54 - pos
+            song_bar = " " * pos + "███" + " " * (27 - pos)
+            song_bar_display = f"[{C.MGN}{song_bar}{C.RST}]"
+        else:
+            sb = int(30 * (state.song_pct / 100))
+            song_bar = "█" * sb + "░" * (30 - sb)
+            status_color = C.DIM if state.song_status == "Done" else C.MGN
+            song_bar_display = f"[{status_color}{song_bar}{C.RST}]"
+            
+        eta_str = f" ETA {state.song_eta}" if state.song_eta and state.song_status == "Downloading" else ""
+        lines.append(f"  {C.DIM}Song:   {C.RST} {song_bar_display} {state.song_pct:>5.1f}% ({state.song_status}){C.DIM}{eta_str} ─ {state.song_name}{C.RST}")
+        
+        for line in lines:
+            sys.stdout.write(f"\r{line}\033[K\n")
+        sys.stdout.flush()
+        state.rendered_lines = len(lines)
 
 # ── run download ────────────────────────────
 def run_download(url, audio_format, output_template, dir_mode, lyrics_mode, state=None, verbose=False):
@@ -1183,6 +1213,8 @@ def main():
         
         ui_state = UIState()
         ui_state.batch_total = len(urls_to_download)
+        ui_state.anim_thread = threading.Thread(target=animate_progress, args=(ui_state,), daemon=True)
+        ui_state.anim_thread.start()
 
         for idx, target_url in enumerate(urls_to_download):
             ui_state.batch_idx = idx + 1
@@ -1194,14 +1226,20 @@ def main():
                 
             run_download(target_url, audio_format, output_template, dir_mode, lyrics_mode, ui_state, verbose)
             
+        ui_state.is_active = False
+        
         if ui_state.rendered_lines > 0:
             sys.stdout.write(f"\033[{ui_state.rendered_lines}B\n")
             sys.stdout.write("\033[?25h") # show cursor
             ui_state.rendered_lines = 0
             
     except KeyboardInterrupt:
+        if 'ui_state' in locals():
+            ui_state.is_active = False
         handle_interrupt(None, None)
     finally:
+        if 'ui_state' in locals():
+            ui_state.is_active = False
         sys.stdout.write("\033[?25h\n") # ensure cursor shown
         reset_colors()
 
