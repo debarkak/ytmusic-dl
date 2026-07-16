@@ -275,7 +275,7 @@ def prompt_directory():
         template = "%(album,playlist_title,title)s/%(track_number,playlist_index,autonumber)02d - %(title)s.%(ext)s"
         mode = "album_folder"
     elif choice == "3":
-        template = "%(artist,uploader)s/%(album,playlist_title,title)s/%(track_number,playlist_index,autonumber)02d - %(title)s.%(ext)s"
+        template = "%(meta_primary_artist|artist,uploader)s/%(album,playlist_title,title)s/%(track_number,playlist_index,autonumber)02d - %(title)s.%(ext)s"
         mode = "artist_folder"
     else:
         print(f"    {C.YLW}!{C.RST} {C.DIM}not valid, going with album folder{C.RST}")
@@ -638,6 +638,7 @@ def run_download(url, audio_format, output_template, dir_mode, lyrics_mode, stat
         "--parse-metadata", "%(artist)s:%(album_artist)s",
         "--parse-metadata", "%(track,title)s:%(title)s",
         "--parse-metadata", "%(release_year,upload_date)s:%(date)s",
+        "--parse-metadata", "artist:(?P<meta_primary_artist>.+?)(?:\s*[,&]|feat|ft|$)",
         "--parse-metadata", "NA:%(comment)s",
         "--parse-metadata", "NA:%(synopsis)s",
         "--parse-metadata", "NA:%(description)s",
@@ -945,7 +946,7 @@ def fetch_artist_discography(url):
             return None
 
     for match in re.finditer(r"initialData\.push\({path:\s*'\\/browse'.*?data:\s*'(.*?)'}\)", html):
-        raw_data = match.group(1)
+        raw_data = match.group(1).replace(r"\/", "/")
         try:
             decoded_data = codecs.decode(raw_data.encode('utf-8'), 'unicode_escape')
             data = json.loads(decoded_data)
