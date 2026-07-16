@@ -291,11 +291,22 @@ def prompt_lyrics():
     print(f"  {C.BLD}lyrics?{C.RST}\n")
     print(f"    1)  none")
     print(f"    2)  save as file")
-    print(f"    3)  embed  {C.DIM}← default{C.RST}")
-    print(f"    4)  both")
+    if mutagen is None:
+        print(f"    3)  embed  {C.RED}(disabled: pip install mutagen){C.RST}")
+        print(f"    4)  both   {C.RED}(disabled: pip install mutagen){C.RST}")
+    else:
+        print(f"    3)  embed  {C.DIM}← default{C.RST}")
+        print(f"    4)  both")
     print()
     
     choice = input(f"    {C.DIM}[1-4, default 3]: {C.RST}").strip()
+    
+    if not choice:
+        choice = "3"
+        
+    if mutagen is None and choice in ("3", "4"):
+        print(f"  {C.YLW}!{C.RST} mutagen not installed, falling back to 'save as file'\n")
+        return "file"
     
     if choice == "1":
         print(f"  {C.GRN}✓{C.RST} none\n")
@@ -1153,9 +1164,9 @@ def main():
             ui_state.rendered_lines = 0
             
     except KeyboardInterrupt:
-        sys.stdout.write("\033[?25h\n") # ensure cursor shown
         handle_interrupt(None, None)
     finally:
+        sys.stdout.write("\033[?25h\n") # ensure cursor shown
         reset_colors()
 
 
