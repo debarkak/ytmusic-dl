@@ -19,6 +19,8 @@ from pathlib import Path
 import threading
 import random
 
+LRCLIB_STRIKES = 0
+
 try:
     import mutagen
     from mutagen.id3 import ID3, USLT, Encoding
@@ -387,7 +389,16 @@ def format_time(seconds):
 
 # ── process lyrics ──────────────────────────
 def process_lyrics(info_json_path, lyrics_mode, state=None, verbose=False):
+    global LRCLIB_STRIKES
+    
     if not info_json_path.exists():
+        return None
+        
+    if LRCLIB_STRIKES >= 5:
+        if state and not verbose:
+            state.song_pct = 95.0
+            state.song_status = "Lyrics skipped (API offline)"
+            render_progress(state)
         return None
         
     if state and not verbose and lyrics_mode != "none":
@@ -479,10 +490,12 @@ def process_lyrics(info_json_path, lyrics_mode, state=None, verbose=False):
                 break
             except Exception as e:
                 if attempt == retries - 1:
+                    LRCLIB_STRIKES += 1
                     return f"  {C.RED}✗{C.RST} {title} (error: {e})"
                 time.sleep(random.randint(3, 16))
 
         if data:
+            LRCLIB_STRIKES = 0
             lyrics = data[0].get("syncedLyrics") or data[0].get("plainLyrics")
             if lyrics:
                 lrc_path = info_json_path.with_suffix("").with_suffix(".lrc")
@@ -1259,9 +1272,19 @@ def run_sync_mode(verbose=False):
     ui_state.anim_thread.start()
 
     failed_downloads = []
+    consecutive_album_fails = 0
     
     try:
         for idx, sf in enumerate(sync_files):
+            free_space = shutil.disk_usage(Path.cwd()).free
+            if free_space < 500 * 1024 * 1024:
+                ui_state.is_active = False
+                hr(C.RED)
+                print(f"  {C.RED}{C.BLD}🛑 EMERGENCY STOP: Disk Almost Full{C.RST}")
+                print(f"  {C.DIM}Less than 500MB remaining. Aborting session.{C.RST}")
+                hr(C.RED)
+                break
+                
             try:
                 with open(sf, "r", encoding="utf-8") as f:
                     data = json.load(f)
@@ -1290,6 +1313,18 @@ def run_sync_mode(verbose=False):
             code = run_download(url, audio_format, "", dir_mode, lyrics_mode, ui_state, verbose, sync_dir=sf.parent)
             if code != 0:
                 failed_downloads.append(url)
+                consecutive_album_fails += 1
+                if consecutive_album_fails >= 3:
+                    if ui_state.rendered_lines > 0:
+                        sys.stdout.write(f"\033[{ui_state.rendered_lines}B\n")
+                        ui_state.rendered_lines = 0
+                    print(f"\n  {C.YLW}{C.BLD}⚠️  Global Rate-Limit Tripwire Triggered!{C.RST}")
+                    print(f"  {C.DIM}3 consecutive albums failed. Sleeping for 5 minutes to evade IP ban...{C.RST}")
+                    ui_state.song_status = "Cooling down (5m pause)..."
+                    time.sleep(300)
+                    consecutive_album_fails = 0
+            else:
+                consecutive_album_fails = 0
                 
     finally:
         ui_state.is_active = False
@@ -1364,8 +1399,18 @@ def main():
         ui_state.anim_thread.start()
 
         failed_downloads = []
+        consecutive_album_fails = 0
 
         for idx, target_url in enumerate(urls_to_download):
+            free_space = shutil.disk_usage(Path.cwd()).free
+            if free_space < 500 * 1024 * 1024:
+                ui_state.is_active = False
+                hr(C.RED)
+                print(f"  {C.RED}{C.BLD}🛑 EMERGENCY STOP: Disk Almost Full{C.RST}")
+                print(f"  {C.DIM}Less than 500MB remaining. Aborting session.{C.RST}")
+                hr(C.RED)
+                break
+                
             ui_state.batch_idx = idx + 1
             ui_state.album_start_time = time.time()
             if len(urls_to_download) > 1 and verbose:
@@ -1376,6 +1421,18 @@ def main():
             code = run_download(target_url, audio_format, output_template, dir_mode, lyrics_mode, ui_state, verbose)
             if code != 0:
                 failed_downloads.append(target_url)
+                consecutive_album_fails += 1
+                if consecutive_album_fails >= 3:
+                    if ui_state.rendered_lines > 0:
+                        sys.stdout.write(f"\033[{ui_state.rendered_lines}B\n")
+                        ui_state.rendered_lines = 0
+                    print(f"\n  {C.YLW}{C.BLD}⚠️  Global Rate-Limit Tripwire Triggered!{C.RST}")
+                    print(f"  {C.DIM}3 consecutive albums failed. Sleeping for 5 minutes to evade IP ban...{C.RST}")
+                    ui_state.song_status = "Cooling down (5m pause)..."
+                    time.sleep(300)
+                    consecutive_album_fails = 0
+            else:
+                consecutive_album_fails = 0
             
         ui_state.is_active = False
         
