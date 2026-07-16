@@ -634,7 +634,7 @@ def run_download(url, audio_format, output_template, dir_mode, lyrics_mode, stat
     cmd = [
         "yt-dlp",
         "--ignore-errors",
-        "--extractor-args", "youtube:player_client=ios,web",
+        "--extractor-args", "youtube:player_client=android_vr,web",
         "--retries", "10",
         "--fragment-retries", "10",
         "--retry-sleep", "linear=1::1",
