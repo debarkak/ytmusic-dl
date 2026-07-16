@@ -1399,9 +1399,18 @@ def run_organize_mode(verbose=False):
             
             if dest_item.exists() and dest_item.is_dir() and item.is_dir():
                 for sub_item in item.iterdir():
-                    if not sub_item.name.startswith("."):
-                        if not (dest_item / sub_item.name).exists():
-                            shutil.move(str(sub_item), str(dest_item))
+                    # We want to move everything, including hidden .ytmusic-dl.json files and .part files!
+                    if not (dest_item / sub_item.name).exists():
+                        shutil.move(str(sub_item), str(dest_item))
+                    elif sub_item.name == ".ytmusic-dl.json":
+                        # If both folders have the sync file, the one in dest is enough. Delete the redundant one.
+                        sub_item.unlink()
+                        
+                # After moving all contents, remove the now-empty album folder
+                try:
+                    item.rmdir()
+                except OSError:
+                    pass
                 albums_moved += 1
             elif not dest_item.exists():
                 shutil.move(str(item), str(target_dir))
