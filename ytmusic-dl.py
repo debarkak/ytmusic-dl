@@ -1,4 +1,4 @@
-ltipl#!/usr/bin/env python3
+#!/usr/bin/env python3
 # ─────────────────────────────────────────────
 #  ytmusic-dl.py
 #  deps: yt-dlp, ffmpeg
@@ -638,7 +638,7 @@ def run_download(url, audio_format, output_template, dir_mode, lyrics_mode, stat
         "--parse-metadata", "%(artist)s:%(album_artist)s",
         "--parse-metadata", "%(track,title)s:%(title)s",
         "--parse-metadata", "%(release_year,upload_date)s:%(date)s",
-        "--parse-metadata", "artist:(?P<meta_primary_artist>.+?)(?:\s*[,&]|feat|ft|$)",
+        "--parse-metadata", r"artist:(?P<meta_primary_artist>.+?)(?:\s*[,&]|feat|ft|$)",
         "--parse-metadata", "NA:%(comment)s",
         "--parse-metadata", "NA:%(synopsis)s",
         "--parse-metadata", "NA:%(description)s",
