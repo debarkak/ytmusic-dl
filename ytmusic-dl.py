@@ -1046,60 +1046,96 @@ def interactive_select(options):
     cursor = 0
     window_start = 0
     max_display = 15
+    search_mode = False
+    search_query = ""
     
     # Hide cursor
     sys.stdout.write("\033[?25l")
     
     def render():
-        nonlocal window_start
+        nonlocal window_start, cursor
         
+        filtered_indices = [i for i, (title, _) in enumerate(options) if search_query.lower() in title.lower()]
+        if cursor >= len(filtered_indices) and filtered_indices:
+            cursor = len(filtered_indices) - 1
+        elif not filtered_indices:
+            cursor = 0
+            
         # Adjust window
         if cursor < window_start:
             window_start = cursor
         elif cursor >= window_start + max_display:
             window_start = cursor - max_display + 1
             
-        display_options = options[window_start:window_start + max_display]
+        display_indices = filtered_indices[window_start:window_start + max_display]
         
         # Move up if not first render
-        if render.rendered:
-            sys.stdout.write(f"\033[{len(display_options) + 2}A")
+        if getattr(render, "rendered", False):
+            sys.stdout.write(f"\033[{max_display + 3}A")
         
-        print(f"\n  {C.BLD}Select releases to download (Space to toggle, Enter to confirm, Up/Down to navigate):{C.RST}")
-        for i, (title, _) in enumerate(display_options):
-            actual_idx = window_start + i
-            marker = f"{C.BLU}❯{C.RST}" if actual_idx == cursor else " "
-            checkbox = f"[{C.GRN}x{C.RST}]" if selected[actual_idx] else "[ ]"
-            color = C.BLD if actual_idx == cursor else C.DIM
+        print(f"\n  {C.BLD}Select releases to download (Space to toggle, Enter to confirm, / to search, Up/Down to navigate):{C.RST}\033[K")
+        if search_mode or search_query:
+            cursor_char = "█" if search_mode else ""
+            print(f"  {C.CYN}Search:{C.RST} {search_query}{cursor_char}\033[K")
+        else:
+            print(f"  {C.DIM}(Press / to search){C.RST}\033[K")
             
-            # Show scrolling indicators
-            if i == 0 and window_start > 0:
-                prefix = f"{C.YLW}↑{C.RST} "
-            elif i == len(display_options) - 1 and window_start + len(display_options) < len(options):
-                prefix = f"{C.YLW}↓{C.RST} "
-            else:
-                prefix = "  "
+        for i in range(max_display):
+            if i < len(display_indices):
+                actual_idx = display_indices[i]
+                title = options[actual_idx][0]
+                marker = f"{C.BLU}❯{C.RST}" if i + window_start == cursor else " "
+                checkbox = f"[{C.GRN}x{C.RST}]" if selected[actual_idx] else "[ ]"
+                color = C.BLD if i + window_start == cursor else C.DIM
                 
-            print(f"  {marker} {checkbox} {prefix}{color}{title}{C.RST}\033[K")
+                # Show scrolling indicators
+                if i == 0 and window_start > 0:
+                    prefix = f"{C.YLW}↑{C.RST} "
+                elif i == len(display_indices) - 1 and window_start + len(display_indices) < len(filtered_indices):
+                    prefix = f"{C.YLW}↓{C.RST} "
+                else:
+                    prefix = "  "
+                    
+                print(f"  {marker} {checkbox} {prefix}{color}{title}{C.RST}\033[K")
+            else:
+                print("\033[K")
+                
         sys.stdout.flush()
         render.rendered = True
 
-    render.rendered = False
     render()
     
     while True:
         c = get_char()
-        if c == '\r' or c == '\n':
-            break
-        elif c == ' ':
-            selected[cursor] = not selected[cursor]
-        elif c == '\x1b[A': # Up
-            cursor = max(0, cursor - 1)
-        elif c == '\x1b[B': # Down
-            cursor = min(len(options) - 1, cursor + 1)
-        elif c == 'q':
-            sys.stdout.write("\033[?25h\n")
-            sys.exit(0)
+        if search_mode:
+            if c == '\r' or c == '\n' or c == '\x1b':
+                search_mode = False
+            elif c in ('\x7f', '\x08'):
+                search_query = search_query[:-1]
+                window_start = 0
+            elif len(c) == 1 and c.isprintable():
+                search_query += c
+                cursor = 0
+                window_start = 0
+        else:
+            if c == '\r' or c == '\n':
+                break
+            elif c == '/':
+                search_mode = True
+            elif c == ' ':
+                filtered_indices = [i for i, (title, _) in enumerate(options) if search_query.lower() in title.lower()]
+                if filtered_indices:
+                    actual_idx = filtered_indices[cursor]
+                    selected[actual_idx] = not selected[actual_idx]
+            elif c == '\x1b[A': # Up
+                cursor = max(0, cursor - 1)
+            elif c == '\x1b[B': # Down
+                filtered_indices = [i for i, (title, _) in enumerate(options) if search_query.lower() in title.lower()]
+                if filtered_indices:
+                    cursor = min(len(filtered_indices) - 1, cursor + 1)
+            elif c == 'q':
+                sys.stdout.write("\033[?25h\n")
+                sys.exit(0)
         render()
         
     # Show cursor
