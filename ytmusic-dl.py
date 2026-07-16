@@ -1028,8 +1028,8 @@ def fetch_artist_discography(url):
         print(f"  {C.RED}✗{C.RST} Failed to fetch artist page: {e}")
         return None, []
 
-    # extract artist name from og:title
-    artist_name_match = re.search(r'<meta property="og:title" content="(.*?)"', html)
+    # extract artist name from title
+    artist_name_match = re.search(r'<title>(.*?)</title>', html)
     artist_name = artist_name_match.group(1) if artist_name_match else None
     if artist_name and artist_name.endswith(" - YouTube Music"):
         artist_name = artist_name[:-16]
