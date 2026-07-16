@@ -680,6 +680,7 @@ def run_download(url, audio_format, output_template, dir_mode, lyrics_mode, stat
         "--parse-metadata", "%(track,title)s:%(title)s",
         "--parse-metadata", "%(release_year,upload_date)s:%(date)s",
         "--parse-metadata", r"artist:(?P<meta_primary_artist>.+?)(?:\s*[,&]|feat|ft|$)",
+        "--replace-in-metadata", "artist,album_artist,meta_primary_artist", r"\s*\([^)]*[\uac00-\ud7a3\u3040-\u30ff\u4e00-\u9fff][^)]*\)", "",
         "--parse-metadata", "NA:%(comment)s",
         "--parse-metadata", "NA:%(synopsis)s",
         "--parse-metadata", "NA:%(description)s",
