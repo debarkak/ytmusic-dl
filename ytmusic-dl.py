@@ -705,7 +705,7 @@ def run_download(url, audio_format, output_template, dir_mode, lyrics_mode, stat
         "yt-dlp",
         "--ignore-errors",
         "--extractor-args", "youtube:player_client=android_vr,web",
-        "--parse-metadata", "%(artist|uploader)s:(?P<folder_artist>[^,&，]+)",
+        "--parse-metadata", "%(playlist_channel|playlist_uploader|channel|uploader|artist)s:(?P<folder_artist>[^,&，]+)",
         "--replace-in-metadata", "folder_artist", r"[\uac00-\ud7a3]+\s*\((.+?)\)", r"\1",
         "--replace-in-metadata", "folder_artist", r"\s*-\s*Topic\s*", "",
         "--replace-in-metadata", "folder_artist", r"^\s+|\s+$", "",
@@ -1425,11 +1425,64 @@ def run_organize_mode(verbose=False):
             removed_count += 1
         except OSError:
             pass
+    # Phase 2: Detect and merge shattered compilation albums
+    print(f"  {C.DIM}Scanning for shattered compilation albums...{C.RST}")
+    album_groups = {}
+    
+    # Map all albums to their parent artist folders
+    for artist_folder in cwd.iterdir():
+        if not artist_folder.is_dir() or artist_folder.name.startswith(".") or artist_folder.name == "Various Artists":
+            continue
             
-    if moved_count > 0:
+        for album_folder in artist_folder.iterdir():
+            if not album_folder.is_dir() or album_folder.name.startswith("."):
+                continue
+                
+            album_groups.setdefault(album_folder.name, []).append(artist_folder)
+            
+    shatter_merged_count = 0
+    various_artists_dir = cwd / "Various Artists"
+    
+    for album_name, artist_folders in album_groups.items():
+        if len(artist_folders) > 1:
+            various_artists_dir.mkdir(parents=True, exist_ok=True)
+            target_album_dir = various_artists_dir / album_name
+            target_album_dir.mkdir(exist_ok=True)
+            
+            for artist_folder in artist_folders:
+                source_album_dir = artist_folder / album_name
+                
+                for sub_item in source_album_dir.iterdir():
+                    dest_item = target_album_dir / sub_item.name
+                    if not dest_item.exists():
+                        shutil.move(str(sub_item), str(target_album_dir))
+                    elif sub_item.name == ".ytmusic-dl.json":
+                        sub_item.unlink()
+                        
+                try:
+                    source_album_dir.rmdir()
+                except OSError:
+                    pass
+                    
+                # Try to clean up empty artist folder
+                try:
+                    artist_folder.rmdir()
+                    removed_count += 1
+                except OSError:
+                    pass
+                
+            print(f"  {C.GRN}✓{C.RST} Reassembled shattered album {C.YLW}'{album_name}'{C.RST} from {len(artist_folders)} artists -> {C.CYN}'Various Artists'{C.RST}")
+            shatter_merged_count += 1
+            
+    if moved_count > 0 or shatter_merged_count > 0:
         hr(C.GRN)
         print(f"  {C.GRN}{C.BLD}✓ Library organized successfully{C.RST}")
-        print(f"  {C.DIM}Merged {moved_count} messy folders and removed {removed_count} empty directories.{C.RST}")
+        if moved_count > 0:
+            print(f"  {C.DIM}Merged {moved_count} messy collab folders.{C.RST}")
+        if shatter_merged_count > 0:
+            print(f"  {C.DIM}Reassembled {shatter_merged_count} shattered compilation albums.{C.RST}")
+        if removed_count > 0:
+            print(f"  {C.DIM}Removed {removed_count} empty directories.{C.RST}")
         hr(C.GRN)
     else:
         print(f"  {C.GRN}✓{C.RST} Library is already perfectly clean!\n")
