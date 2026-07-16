@@ -1056,16 +1056,19 @@ def get_char():
         import msvcrt
         return msvcrt.getch().decode('utf-8')
     except ImportError:
-        import tty, termios, select
+        import tty, termios, select, os
         fd = sys.stdin.fileno()
         old_settings = termios.tcgetattr(fd)
         try:
-            tty.setraw(sys.stdin.fileno())
-            ch = sys.stdin.read(1)
+            tty.setraw(fd)
+            # Use os.read to bypass Python's internal sys.stdin buffer
+            b = os.read(fd, 1)
+            ch = b.decode('utf-8', errors='ignore')
             if ch == '\x1b':
-                dr, _, _ = select.select([sys.stdin], [], [], 0.1)
+                dr, _, _ = select.select([fd], [], [], 0.1)
                 if dr:
-                    ch += sys.stdin.read(2)
+                    b += os.read(fd, 2)
+                    ch = b.decode('utf-8', errors='ignore')
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
         return ch
@@ -1142,6 +1145,12 @@ def interactive_select(options):
         if search_mode:
             if c == '\r' or c == '\n' or c == '\x1b':
                 search_mode = False
+            elif c == '\x1b[A': # Up
+                cursor = max(0, cursor - 1)
+            elif c == '\x1b[B': # Down
+                filtered_indices = [i for i, (title, _) in enumerate(options) if search_query.lower() in title.lower()]
+                if filtered_indices:
+                    cursor = min(len(filtered_indices) - 1, cursor + 1)
             elif c in ('\x7f', '\x08'):
                 search_query = search_query[:-1]
                 window_start = 0
