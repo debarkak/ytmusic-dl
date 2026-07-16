@@ -78,9 +78,8 @@ def _init_windows():
 _init_windows()
 
 
-# ── colors ──────────────────────────────────
+# ── terminal styling ──────────────────────────
 class C:
-    """ansi color codes"""
     RED = "\033[0;31m"
     GRN = "\033[0;32m"
     YLW = "\033[1;33m"
@@ -129,8 +128,24 @@ def reset_colors():
 
 
 # ── signal handling ─────────────────────────
+CURRENT_PROCESS = None
+
 def handle_interrupt(sig, frame):
+    global CURRENT_PROCESS
     print(f"\n{C.RST}{C.RED}{C.BLD}  ✗ interrupted{C.RST}")
+    
+    if CURRENT_PROCESS:
+        print(f"  {C.DIM}Terminating yt-dlp...{C.RST}")
+        try:
+            CURRENT_PROCESS.terminate()
+            CURRENT_PROCESS.wait(timeout=2)
+        except Exception:
+            try:
+                CURRENT_PROCESS.kill()
+            except Exception:
+                pass
+                
+    sys.stdout.write("\033[?25h\n") # show cursor
     sys.exit(130)
 
 
@@ -633,7 +648,10 @@ def render_progress(state):
         state.rendered_lines = len(lines)
 
 # ── run download ────────────────────────────
-def run_download(url, audio_format, output_template, dir_mode, lyrics_mode, state=None, verbose=False):
+def run_download(url, audio_format, output_template, dir_mode, lyrics_mode, state=None, verbose=False, sync_dir=None):
+    if sync_dir:
+        output_template = r"%(track_number,playlist_index,autonumber)02d - %(title)s.%(ext)s"
+        
     extra_flags, thumb_convert, thumb_codec = build_format_flags(audio_format)
 
     section("downloading")
@@ -705,6 +723,7 @@ def run_download(url, audio_format, output_template, dir_mode, lyrics_mode, stat
     cmd.append(url)
 
     start_time = time.time()
+    global CURRENT_PROCESS
 
     # run yt-dlp with streaming output so we can inject per-song separators
     # merges stderr into stdout since yt-dlp writes most output to stderr
@@ -714,8 +733,10 @@ def run_download(url, audio_format, output_template, dir_mode, lyrics_mode, stat
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            cwd=str(sync_dir) if sync_dir else None,
             **_subprocess_kwargs(),
         )
+        CURRENT_PROCESS = process
     except FileNotFoundError:
         # yt-dlp binary not found (shouldn't happen after dep check, but just in case)
         print(f"\n  {C.RED}✗{C.RST} couldn't run yt-dlp, is it in your PATH?")
@@ -743,152 +764,176 @@ def run_download(url, audio_format, output_template, dir_mode, lyrics_mode, stat
         state.album_total = 1 # default
         render_progress(state)
 
-    for line in process.stdout:
-        line = line.rstrip("\n")
-        
-        # detect new track: [download] Downloading item X of Y
-        m = item_pattern.search(line)
-        if m:
-            if last_was_progress: 
-                if verbose: print()
-                last_was_progress = False
+    try:
+        for line in process.stdout:
+            line = line.rstrip("\n")
             
-            # process lyrics for the PREVIOUS track before starting this new one
-            if current_info_json:
-                res = process_lyrics(Path(current_info_json), lyrics_mode, state, verbose)
-                if res: lyrics_results.append(res)
-                current_info_json = None
-                
-            # close the previous track's block
-            if header_printed and verbose:
-                hr(C.CYN)
-                print()
-                
-            if state:
-                state.album_track = int(m.group(1))
-                state.album_total = int(m.group(2))
-                state.song_pct = 0.0
-                state.song_status = "Waiting"
-                if not verbose: render_progress(state)
-            
-            header_printed = False
-            if verbose: print(line)
-            continue
-            
-        # track info JSON path
-        m_info = info_json_pattern.search(line)
-        if m_info:
-            current_info_json = m_info.group(1)
-
-        # detect retry
-        m_retry = retry_pattern.search(line)
-        if m_retry:
-            if state and not verbose:
-                current, total = m_retry.group(1), m_retry.group(2)
-                state.song_status = f"Retrying ({current}/{total})..."
-                render_progress(state)
-            if verbose: print(line)
-            continue
-
-        # grab song name from destination / already-downloaded line
-        if not header_printed:
-            m2 = dest_pattern.search(line)
-            if m2:
+            # detect new track: [download] Downloading item X of Y
+            m = item_pattern.search(line)
+            if m:
                 if last_was_progress: 
                     if verbose: print()
                     last_was_progress = False
-                song_name = m2.group(1)
                 
+                # process lyrics for the PREVIOUS track before starting this new one
+                if current_info_json:
+                    res = process_lyrics(Path(current_info_json), lyrics_mode, state, verbose)
+                    if res: lyrics_results.append(res)
+                    current_info_json = None
+                    
+                # close the previous track's block
+                if header_printed and verbose:
+                    hr(C.CYN)
+                    print()
+                    
                 if state:
-                    state.song_name = song_name
+                    state.album_track = int(m.group(1))
+                    state.album_total = int(m.group(2))
                     state.song_pct = 0.0
-                    state.song_status = "Downloading"
-                    if state.album_track == 0: # If item_pattern was never hit
-                        state.album_track = 1
+                    state.song_status = "Waiting"
                     if not verbose: render_progress(state)
                 
-                if verbose:
-                    track_info = f"  {C.YLW}[{state.album_track if state else 1}/{state.album_total if state else 1}]{C.RST}"
-                    hr(C.CYN)
-                    print(f"  {C.MGN}{C.BLD}♫  {song_name}{C.RST}{track_info}")
-                    hr(C.CYN)
-                header_printed = True
+                header_printed = False
+                if verbose: print(line)
+                continue
+                
+            # track info JSON path
+            m_info = info_json_pattern.search(line)
+            if m_info:
+                current_info_json = m_info.group(1)
+                if dir_mode in ["album_folder", "artist_folder"]:
+                    album_dir = Path(current_info_json).parent
+                    sync_file = album_dir / ".ytmusic-dl.json"
+                    if not sync_file.exists():
+                        try:
+                            sync_data = {
+                                "url": url,
+                                "audio_format": audio_format,
+                                "dir_mode": dir_mode,
+                                "lyrics_mode": lyrics_mode
+                            }
+                            with open(sync_file, "w", encoding="utf-8") as f:
+                                json.dump(sync_data, f, indent=2)
+                            if IS_WINDOWS:
+                                import ctypes
+                                FILE_ATTRIBUTE_HIDDEN = 0x02
+                                ctypes.windll.kernel32.SetFileAttributesW(str(sync_file), FILE_ATTRIBUTE_HIDDEN)
+                        except Exception:
+                            pass
+
+            # detect retry
+            m_retry = retry_pattern.search(line)
+            if m_retry:
+                if state and not verbose:
+                    current, total = m_retry.group(1), m_retry.group(2)
+                    state.song_status = f"Retrying ({current}/{total})..."
+                    render_progress(state)
                 if verbose: print(line)
                 continue
 
-        # grab progress
-        mp = progress_pattern.search(line)
-        if mp and header_printed:
-            pct_str = mp.group(1)
-            eta_match = re.search(r"ETA\s+([\d:]+)", line)
-            eta = eta_match.group(1) if eta_match else ""
-            
-            try:
-                pct = float(pct_str)
+            # grab song name from destination / already-downloaded line
+            if not header_printed:
+                m2 = dest_pattern.search(line)
+                if m2:
+                    if last_was_progress: 
+                        if verbose: print()
+                        last_was_progress = False
+                    song_name = m2.group(1)
+                    
+                    if state:
+                        state.song_name = song_name
+                        state.song_pct = 0.0
+                        state.song_status = "Downloading"
+                        if state.album_track == 0: # If item_pattern was never hit
+                            state.album_track = 1
+                        if not verbose: render_progress(state)
+                    
+                    if verbose:
+                        track_info = f"  {C.YLW}[{state.album_track if state else 1}/{state.album_total if state else 1}]{C.RST}"
+                        hr(C.CYN)
+                        print(f"  {C.MGN}{C.BLD}♫  {song_name}{C.RST}{track_info}")
+                        hr(C.CYN)
+                    header_printed = True
+                    if verbose: print(line)
+                    continue
+
+            # grab progress
+            mp = progress_pattern.search(line)
+            if mp and header_printed:
+                pct_str = mp.group(1)
+                eta_match = re.search(r"ETA\s+([\d:]+)", line)
+                eta = eta_match.group(1) if eta_match else ""
+                
+                try:
+                    pct = float(pct_str)
+                    if state and not verbose:
+                        state.song_pct = pct * 0.75 # 0-75%
+                        state.song_status = "Downloading"
+                        if eta: state.song_eta = eta
+                        render_progress(state)
+                    elif verbose:
+                        bar_len = 30
+                        filled = int(bar_len * pct / 100)
+                        bar = "█" * filled + "░" * (bar_len - filled)
+                        eta_str = f" ETA {eta}" if eta else ""
+                        sys.stdout.write(f"\r  {C.DIM}Downloading:{C.RST} [{C.BLU}{bar}{C.RST}] {pct:>5.1f}%{C.DIM}{eta_str}{C.RST}\033[K")
+                        sys.stdout.flush()
+                    last_was_progress = True
+                except ValueError:
+                    pass
+                if verbose:
+                    # Need newline for next line if verbose but not logging progress
+                    pass
+                continue
+                
+            # print errors or warnings
+            if "ERROR:" in line or "WARNING:" in line:
+                if last_was_progress: 
+                    if verbose: print()
+                    last_was_progress = False
+                
+                # Since errors break our nice fixed block, we need to temporarily clear the block, 
+                # print the error, and redraw it.
                 if state and not verbose:
-                    state.song_pct = pct * 0.75 # 0-75%
-                    state.song_status = "Downloading"
-                    if eta: state.song_eta = eta
+                    sys.stdout.write(f"\033[{state.rendered_lines}A")
+                    sys.stdout.write("\033[J") # clear below
+                    state.rendered_lines = 0
+                    
+                print(f"  {C.YLW}{line}{C.RST}")
+                
+                if state and not verbose:
+                    render_progress(state)
+                continue
+
+            # post-processing status indicators
+            if "[ExtractAudio]" in line or "[EmbedThumbnail]" in line or "[Metadata]" in line:
+                if state and not verbose:
+                    if "[ExtractAudio]" in line:
+                        state.song_pct = 75.0
+                        state.song_status = "Converting audio"
+                    elif "[Metadata]" in line:
+                        state.song_pct = 85.0
+                        state.song_status = "Adding metadata"
+                    elif "[EmbedThumbnail]" in line:
+                        state.song_pct = 95.0
+                        state.song_status = "Embedding thumbnail"
                     render_progress(state)
                 elif verbose:
-                    bar_len = 30
-                    filled = int(bar_len * pct / 100)
-                    bar = "█" * filled + "░" * (bar_len - filled)
-                    eta_str = f" ETA {eta}" if eta else ""
-                    sys.stdout.write(f"\r  {C.DIM}Downloading:{C.RST} [{C.BLU}{bar}{C.RST}] {pct:>5.1f}%{C.DIM}{eta_str}{C.RST}\033[K")
-                    sys.stdout.flush()
-                last_was_progress = True
-            except ValueError:
-                pass
-            if verbose:
-                # Need newline for next line if verbose but not logging progress
-                pass
-            continue
-            
-        # print errors or warnings
-        if "ERROR:" in line or "WARNING:" in line:
-            if last_was_progress: 
-                if verbose: print()
+                    if last_was_progress: print()
+                    print(line)
                 last_was_progress = False
-            
-            # Since errors break our nice fixed block, we need to temporarily clear the block, 
-            # print the error, and redraw it.
-            if state and not verbose:
-                sys.stdout.write(f"\033[{state.rendered_lines}A")
-                sys.stdout.write("\033[J") # clear below
-                state.rendered_lines = 0
-                
-            print(f"  {C.YLW}{line}{C.RST}")
-            
-            if state and not verbose:
-                render_progress(state)
-            continue
+                continue
 
-        # post-processing status indicators
-        if "[ExtractAudio]" in line or "[EmbedThumbnail]" in line or "[Metadata]" in line:
-            if state and not verbose:
-                if "[ExtractAudio]" in line:
-                    state.song_pct = 75.0
-                    state.song_status = "Converting audio"
-                elif "[Metadata]" in line:
-                    state.song_pct = 85.0
-                    state.song_status = "Adding metadata"
-                elif "[EmbedThumbnail]" in line:
-                    state.song_pct = 95.0
-                    state.song_status = "Embedding thumbnail"
-                render_progress(state)
-            elif verbose:
-                if last_was_progress: print()
+            # pass everything else through if verbose
+            if verbose:
+                if last_was_progress: print(); last_was_progress = False
                 print(line)
-            last_was_progress = False
-            continue
 
-        # pass everything else through if verbose
-        if verbose:
-            if last_was_progress: print(); last_was_progress = False
-            print(line)
-
-    process.wait()
+    finally:
+        process.stdout.close()
+        process.wait()
+        CURRENT_PROCESS = None
+        
     if last_was_progress and verbose: print()
     last_was_progress = False
     
@@ -939,6 +984,8 @@ def run_download(url, audio_format, output_template, dir_mode, lyrics_mode, stat
     else:
         print(f"  {C.DIM}files:{C.RST}  {C.BLD}{Path.cwd()}{C.RST}")
     hr(C.GRN)
+    
+    return exit_code
 
 
 # ── artist scraper ──────────────────────────
@@ -1185,11 +1232,90 @@ def interactive_select(options):
     
     return [options[i][1] for i, is_sel in enumerate(selected) if is_sel]
 
+# ── sync mode ───────────────────────────────
+def run_sync_mode(verbose=False):
+    section("sync library")
+    print(f"  {C.DIM}Scanning for .ytmusic-dl.json files...{C.RST}")
+    
+    sync_files = list(Path.cwd().rglob(".ytmusic-dl.json"))
+    if not sync_files:
+        print(f"\n  {C.YLW}!{C.RST} No sync files found in the current directory tree.")
+        return
+        
+    print(f"  {C.GRN}✓{C.RST} Found {len(sync_files)} albums/directories to sync\n")
+    
+    ui_state = UIState()
+    ui_state.batch_total = len(sync_files)
+    ui_state.anim_thread = threading.Thread(target=animate_progress, args=(ui_state,), daemon=True)
+    ui_state.anim_thread.start()
+
+    failed_downloads = []
+    
+    try:
+        for idx, sf in enumerate(sync_files):
+            try:
+                with open(sf, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception as e:
+                if verbose: print(f"  {C.RED}✗{C.RST} Failed to read {sf}: {e}")
+                continue
+                
+            url = data.get("url")
+            audio_format = data.get("audio_format")
+            dir_mode = data.get("dir_mode")
+            lyrics_mode = data.get("lyrics_mode")
+            
+            if not all([url, audio_format, dir_mode, lyrics_mode]):
+                if verbose: print(f"  {C.RED}✗{C.RST} Invalid sync file: {sf}")
+                continue
+                
+            ui_state.batch_idx = idx + 1
+            ui_state.album_start_time = time.time()
+            
+            if verbose or len(sync_files) > 1:
+                print(f"\n  {C.MGN}══════════════════════════════════════════{C.RST}")
+                print(f"  {C.BLD}Syncing batch item {idx+1} of {len(sync_files)}{C.RST}")
+                print(f"  {C.DIM}Target: {sf.parent}{C.RST}")
+                print(f"  {C.MGN}══════════════════════════════════════════{C.RST}")
+                
+            code = run_download(url, audio_format, "", dir_mode, lyrics_mode, ui_state, verbose, sync_dir=sf.parent)
+            if code != 0:
+                failed_downloads.append(url)
+                
+    finally:
+        ui_state.is_active = False
+        
+        if ui_state.rendered_lines > 0:
+            sys.stdout.write(f"\033[{ui_state.rendered_lines}B\n")
+            sys.stdout.write("\033[?25h") # show cursor
+            ui_state.rendered_lines = 0
+            
+        if failed_downloads:
+            hr(C.RED)
+            print(f"  {C.RED}{C.BLD}⚠️  Failed Downloads Summary{C.RST}")
+            print(f"  {C.DIM}The following {len(failed_downloads)} URLs encountered terminal errors during processing:{C.RST}")
+            for u in failed_downloads:
+                print(f"  {C.DIM}- {u}{C.RST}")
+            hr(C.RED)
+
+
 # ── main ────────────────────────────────────
 def main():
     arg_url = None
     verbose = False
     
+    if "--sync" in sys.argv:
+        verbose = "-v" in sys.argv or "--verbose" in sys.argv
+        banner()
+        try:
+            run_sync_mode(verbose)
+        except KeyboardInterrupt:
+            handle_interrupt(None, None)
+        finally:
+            sys.stdout.write("\033[?25h\n") # ensure cursor shown
+            reset_colors()
+        return
+
     for arg in sys.argv[1:]:
         if arg in ("-h", "--help"):
             print(f"Usage: {sys.argv[0]} [-v] [URL]")
@@ -1228,6 +1354,8 @@ def main():
         ui_state.anim_thread = threading.Thread(target=animate_progress, args=(ui_state,), daemon=True)
         ui_state.anim_thread.start()
 
+        failed_downloads = []
+
         for idx, target_url in enumerate(urls_to_download):
             ui_state.batch_idx = idx + 1
             ui_state.album_start_time = time.time()
@@ -1236,7 +1364,9 @@ def main():
                 print(f"  {C.BLD}Processing batch item {idx+1} of {len(urls_to_download)}{C.RST}")
                 print(f"  {C.MGN}══════════════════════════════════════════{C.RST}")
                 
-            run_download(target_url, audio_format, output_template, dir_mode, lyrics_mode, ui_state, verbose)
+            code = run_download(target_url, audio_format, output_template, dir_mode, lyrics_mode, ui_state, verbose)
+            if code != 0:
+                failed_downloads.append(target_url)
             
         ui_state.is_active = False
         
@@ -1244,6 +1374,14 @@ def main():
             sys.stdout.write(f"\033[{ui_state.rendered_lines}B\n")
             sys.stdout.write("\033[?25h") # show cursor
             ui_state.rendered_lines = 0
+            
+        if failed_downloads:
+            hr(C.RED)
+            print(f"  {C.RED}{C.BLD}⚠️  Failed Downloads Summary{C.RST}")
+            print(f"  {C.DIM}The following {len(failed_downloads)} URLs encountered terminal errors during processing:{C.RST}")
+            for u in failed_downloads:
+                print(f"  {C.DIM}- {u}{C.RST}")
+            hr(C.RED)
             
     except KeyboardInterrupt:
         if 'ui_state' in locals():
