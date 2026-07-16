@@ -294,7 +294,7 @@ def prompt_directory():
         template = "%(album,playlist_title,title)s/%(track_number,playlist_index,autonumber)02d - %(title)s.%(ext)s"
         mode = "album_folder"
     elif choice == "3":
-        template = "%(meta_primary_artist|artist,uploader)s/%(album,playlist_title,title)s/%(track_number,playlist_index,autonumber)02d - %(title)s.%(ext)s"
+        template = "%(folder_artist|uploader)s/%(album,playlist_title,title)s/%(track_number,playlist_index,autonumber)02d - %(title)s.%(ext)s"
         mode = "artist_folder"
     else:
         print(f"    {C.YLW}!{C.RST} {C.DIM}not valid, going with album folder{C.RST}")
@@ -705,6 +705,10 @@ def run_download(url, audio_format, output_template, dir_mode, lyrics_mode, stat
         "yt-dlp",
         "--ignore-errors",
         "--extractor-args", "youtube:player_client=android_vr,web",
+        "--parse-metadata", "%(artist|uploader)s:(?P<folder_artist>[^,&，]+)",
+        "--replace-in-metadata", "folder_artist", r"[\uac00-\ud7a3]+\s*\((.+?)\)", r"\1",
+        "--replace-in-metadata", "folder_artist", r"\s*-\s*Topic\s*", "",
+        "--replace-in-metadata", "folder_artist", r"^\s+|\s+$", "",
         "--retries", "25",
         "--fragment-retries", "25",
         "--retry-sleep", "linear=3::16",
@@ -1349,6 +1353,78 @@ def run_sync_mode(verbose=False):
             hr(C.RED)
 
 
+# ── organize mode ───────────────────────────
+def run_organize_mode(verbose=False):
+    section("organize library")
+    print(f"  {C.DIM}Scanning current directory for messy collab folders...{C.RST}")
+    
+    import shutil
+    
+    cwd = Path.cwd()
+    moved_count = 0
+    removed_count = 0
+    
+    for folder in cwd.iterdir():
+        if not folder.is_dir() or folder.name.startswith("."):
+            continue
+            
+        original_name = folder.name
+        
+        # 1. Parse primary artist (everything before , & ，)
+        match = re.search(r'^([^,&，]+)', original_name)
+        clean_name = match.group(1) if match else original_name
+            
+        # 2. Strip Korean text
+        clean_name = re.sub(r'[\uac00-\ud7a3]+\s*\((.+?)\)', r'\1', clean_name)
+        
+        # 3. Strip " - Topic"
+        clean_name = re.sub(r'\s*-\s*Topic\s*', '', clean_name)
+        
+        # 4. Trim whitespace
+        clean_name = clean_name.strip()
+        
+        if not clean_name or clean_name == original_name:
+            continue
+            
+        target_dir = cwd / clean_name
+        target_dir.mkdir(parents=True, exist_ok=True)
+            
+        # Move all albums inside the messy folder to the clean folder
+        albums_moved = 0
+        for item in folder.iterdir():
+            if item.name.startswith("."):
+                continue
+            
+            dest_item = target_dir / item.name
+            
+            if dest_item.exists() and dest_item.is_dir() and item.is_dir():
+                for sub_item in item.iterdir():
+                    if not sub_item.name.startswith("."):
+                        if not (dest_item / sub_item.name).exists():
+                            shutil.move(str(sub_item), str(dest_item))
+                albums_moved += 1
+            elif not dest_item.exists():
+                shutil.move(str(item), str(target_dir))
+                albums_moved += 1
+                
+        if albums_moved > 0:
+            print(f"  {C.GRN}✓{C.RST} Merged {C.YLW}'{original_name}'{C.RST} -> {C.CYN}'{clean_name}'{C.RST} ({albums_moved} items)")
+            moved_count += 1
+            
+        try:
+            folder.rmdir()
+            removed_count += 1
+        except OSError:
+            pass
+            
+    if moved_count > 0:
+        hr(C.GRN)
+        print(f"  {C.GRN}{C.BLD}✓ Library organized successfully{C.RST}")
+        print(f"  {C.DIM}Merged {moved_count} messy folders and removed {removed_count} empty directories.{C.RST}")
+        hr(C.GRN)
+    else:
+        print(f"  {C.GRN}✓{C.RST} Library is already perfectly clean!\n")
+
 # ── main ────────────────────────────────────
 def main():
     arg_url = None
@@ -1363,6 +1439,18 @@ def main():
             handle_interrupt(None, None)
         finally:
             sys.stdout.write("\033[?25h\n") # ensure cursor shown
+            reset_colors()
+        return
+
+    if "--organize" in sys.argv:
+        verbose = "-v" in sys.argv or "--verbose" in sys.argv
+        banner()
+        try:
+            run_organize_mode(verbose)
+        except KeyboardInterrupt:
+            handle_interrupt(None, None)
+        finally:
+            sys.stdout.write("\033[?25h\n")
             reset_colors()
         return
 
