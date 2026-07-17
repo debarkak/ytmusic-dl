@@ -586,6 +586,8 @@ class UIState:
         self.rendered_lines = 0
         self.album_start_time = 0.0
         self.album_eta_seconds = None
+        self.overall_start_time = 0.0
+        self.overall_eta_seconds = None
         self.lock = threading.Lock()
         self.is_active = True
         self.paused = False
@@ -615,41 +617,66 @@ def render_progress(state):
         completed_batches = max(0, state.batch_idx - 1)
         overall_fraction = (completed_batches + album_fraction) / state.batch_total if state.batch_total > 0 else 0.0
         
-        # Overall
+        is_indeterminate = state.song_status not in ["Downloading", "Done", "Converting audio", "Adding metadata", "Embedding thumbnail"]
+        now = time.time()
+        
+        # ── Overall ETA ──
+        overall_eta_str = ""
+        if state.overall_start_time > 0 and 0 < overall_fraction < 1.0 and not is_indeterminate:
+            elapsed = now - state.overall_start_time
+            if elapsed > 2:  # wait a couple seconds before showing ETA
+                raw_remaining = (elapsed / overall_fraction) - elapsed
+                if raw_remaining > 0:
+                    if state.overall_eta_seconds is None:
+                        state.overall_eta_seconds = raw_remaining
+                    else:
+                        state.overall_eta_seconds = 0.85 * state.overall_eta_seconds + 0.15 * raw_remaining
+        if state.overall_eta_seconds is not None and state.overall_eta_seconds > 0:
+            mins, secs = divmod(int(state.overall_eta_seconds), 60)
+            hrs, mins = divmod(mins, 60)
+            if hrs > 0:
+                overall_eta_str = f" ETA {hrs}h{mins:02d}m"
+            elif mins > 0:
+                overall_eta_str = f" ETA {mins:02d}:{secs:02d}"
+            else:
+                overall_eta_str = f" ETA {secs}s"
+        
+        # Overall bar
         overall_pct = overall_fraction * 100
         bb = int(30 * overall_fraction)
         batch_bar = "█" * bb + "░" * (30 - bb)
-        lines.append(f"  {C.DIM}Overall:{C.RST} [{C.BLU}{batch_bar}{C.RST}] {overall_pct:>5.1f}% ─ {state.batch_idx}/{state.batch_total} batches")
+        lines.append(f"  {C.DIM}Overall:{C.RST} [{C.BLU}{batch_bar}{C.RST}] {overall_pct:>5.1f}% ─ {state.batch_idx}/{state.batch_total} batches{C.DIM}{overall_eta_str}{C.RST}")
         
-        # Album
-        album_pct = album_fraction * 100
-        ab = int(30 * album_fraction)
-        album_bar = "█" * ab + "░" * (30 - ab)
-        
-        is_indeterminate = state.song_status not in ["Downloading", "Done", "Converting audio", "Adding metadata", "Embedding thumbnail"]
-        
+        # ── Album ETA ──
         album_eta_str = ""
-        if state.album_total > 0 and getattr(state, "album_start_time", 0.0) > 0 and 0 < album_fraction < 1.0:
+        if state.album_total > 0 and state.album_start_time > 0 and 0 < album_fraction < 1.0:
             if not is_indeterminate:
-                elapsed = time.time() - state.album_start_time
-                raw_remaining = (elapsed / album_fraction) - elapsed
-                if raw_remaining > 0:
-                    if state.album_eta_seconds is None:
-                        state.album_eta_seconds = raw_remaining
-                    else:
-                        state.album_eta_seconds = 0.95 * state.album_eta_seconds + 0.05 * raw_remaining
+                elapsed = now - state.album_start_time
+                if elapsed > 1:  # wait a second before showing ETA
+                    raw_remaining = (elapsed / album_fraction) - elapsed
+                    if raw_remaining > 0:
+                        if state.album_eta_seconds is None:
+                            state.album_eta_seconds = raw_remaining
+                        else:
+                            state.album_eta_seconds = 0.8 * state.album_eta_seconds + 0.2 * raw_remaining
             
-            if getattr(state, "album_eta_seconds", None) is not None:
+            if state.album_eta_seconds is not None and state.album_eta_seconds > 0:
                 mins, secs = divmod(int(state.album_eta_seconds), 60)
                 hrs, mins = divmod(mins, 60)
                 if hrs > 0:
-                    album_eta_str = f" ETA {hrs:02d}:{mins:02d}:{secs:02d}"
-                else:
+                    album_eta_str = f" ETA {hrs}h{mins:02d}m"
+                elif mins > 0:
                     album_eta_str = f" ETA {mins:02d}:{secs:02d}"
+                else:
+                    album_eta_str = f" ETA {secs}s"
                         
+        # Album bar
+        album_pct = album_fraction * 100
+        ab = int(30 * album_fraction)
+        album_bar = "█" * ab + "░" * (30 - ab)
         lines.append(f"  {C.DIM}Album:  {C.RST} [{C.CYN}{album_bar}{C.RST}] {album_pct:>5.1f}% ─ {state.album_track}/{state.album_total} tracks{C.DIM}{album_eta_str}{C.RST}")
         
-        # Song
+        # ── Song bar ──
         if is_indeterminate:
             # Bouncing animation (30 chars wide, 3 char block)
             pos = int(time.time() * 20) % 54
@@ -1345,6 +1372,7 @@ def run_sync_mode(verbose=False):
                 
             ui_state.batch_idx = idx + 1
             ui_state.album_start_time = time.time()
+            ui_state.album_eta_seconds = None  # reset per-album ETA
             
             if verbose or len(sync_files) > 1:
                 print(f"\n  {C.MGN}══════════════════════════════════════════{C.RST}")
@@ -1537,6 +1565,7 @@ def main():
         
         ui_state = UIState()
         ui_state.batch_total = len(urls_to_download)
+        ui_state.overall_start_time = time.time()
         ui_state.anim_thread = threading.Thread(target=animate_progress, args=(ui_state,), daemon=True)
         ui_state.anim_thread.start()
 
@@ -1555,6 +1584,7 @@ def main():
                 
             ui_state.batch_idx = idx + 1
             ui_state.album_start_time = time.time()
+            ui_state.album_eta_seconds = None  # reset per-album ETA
             if len(urls_to_download) > 1 and verbose:
                 print(f"\n  {C.MGN}══════════════════════════════════════════{C.RST}")
                 print(f"  {C.BLD}Processing batch item {idx+1} of {len(urls_to_download)}{C.RST}")
