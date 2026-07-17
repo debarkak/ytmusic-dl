@@ -588,11 +588,13 @@ class UIState:
         self.album_eta_seconds = None
         self.lock = threading.Lock()
         self.is_active = True
+        self.paused = False
 
 def animate_progress(state):
     while state.is_active:
-        if state.song_status not in ["Downloading", "Done", "Converting audio", "Adding metadata", "Embedding thumbnail"]:
-            render_progress(state)
+        if not state.paused and state.rendered_lines > 0:
+            if state.song_status not in ["Downloading", "Done", "Converting audio", "Adding metadata", "Embedding thumbnail"]:
+                render_progress(state)
         time.sleep(0.05)
 
 def render_progress(state):
@@ -675,6 +677,10 @@ def run_download(url, audio_format, output_template, dir_mode, lyrics_mode, stat
         output_template = r"%(track_number,playlist_index,autonumber)02d - %(title)s.%(ext)s"
         
     extra_flags, thumb_convert, thumb_codec = build_format_flags(audio_format)
+
+    # Unpause animation for this new batch
+    if state:
+        state.paused = False
 
     section("downloading")
 
@@ -963,6 +969,14 @@ def run_download(url, audio_format, output_template, dir_mode, lyrics_mode, stat
     if last_was_progress and verbose: print()
     last_was_progress = False
     
+    # Pause the animation thread before printing summary text
+    if state:
+        state.paused = True
+        # Move cursor past the progress block so summary prints below it
+        if state.rendered_lines > 0 and not verbose:
+            sys.stdout.write(f"\033[{state.rendered_lines}B\n")
+            state.rendered_lines = 0
+    
     # Process the last track's lyrics (or single-video download)
     if current_info_json:
         res = process_lyrics(Path(current_info_json), lyrics_mode, state, verbose)
@@ -977,11 +991,6 @@ def run_download(url, audio_format, output_template, dir_mode, lyrics_mode, stat
 
     # Print final lyrics summary if applicable
     if lyrics_mode != "none" and lyrics_results:
-        # Move past the fixed block
-        if state and not verbose:
-            sys.stdout.write(f"\033[{state.rendered_lines}B\n")
-            state.rendered_lines = 0
-            
         print()
         section("lyrics summary")
         for res in lyrics_results:
