@@ -595,7 +595,7 @@ def animate_progress(state):
         if not state.paused and state.rendered_lines > 0:
             if state.song_status not in ["Downloading", "Done", "Converting audio", "Adding metadata", "Embedding thumbnail"]:
                 render_progress(state)
-        time.sleep(0.05)
+        time.sleep(1 / 120)
 
 def render_progress(state):
     with state.lock:
