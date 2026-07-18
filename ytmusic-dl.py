@@ -102,6 +102,7 @@ if not sys.stdout.isatty():
 
 # ── config ──────────────────────────────────
 FRAGMENTS = 4
+COOKIE_BROWSER = None  # set by CLI or auto-detected
 
 FORMAT_OPTIONS = {
     "1": ("opus", f"native yt audio, no re-encoding  {C.GRN}← recommended{C.RST}"),
@@ -159,6 +160,36 @@ if hasattr(signal, "SIGTERM"):
     signal.signal(signal.SIGTERM, handle_interrupt)
 
 
+# ── cookie browser detection ───────────────
+def _detect_cookie_browser():
+    """auto-detect the best browser for --cookies-from-browser.
+    prefers firefox (no keyring issues on linux) then chromium-based.
+    returns the browser name string or None if nothing usable found."""
+    # order: firefox first (avoids keyring/kwallet issues on linux),
+    # then chromium-based browsers in rough popularity order
+    candidates = [
+        ("firefox", ["firefox", "firefox-esr"]),
+        ("chromium", ["chromium", "chromium-browser"]),
+        ("chrome", ["google-chrome", "google-chrome-stable", "chrome"]),
+        ("brave", ["brave", "brave-browser"]),
+        ("edge", ["microsoft-edge", "microsoft-edge-stable"]),
+        ("vivaldi", ["vivaldi", "vivaldi-stable"]),
+        ("opera", ["opera"]),
+    ]
+    for browser_name, binaries in candidates:
+        for binary in binaries:
+            if shutil.which(binary):
+                return browser_name
+    return None
+
+
+def _cookie_flags():
+    """return the yt-dlp args for cookie auth, or empty list."""
+    if COOKIE_BROWSER:
+        return ["--cookies-from-browser", COOKIE_BROWSER]
+    return []
+
+
 # ── dependency check ────────────────────────
 def check_deps():
     missing = []
@@ -187,6 +218,10 @@ def check_deps():
         ytdlp_ver = "?"
 
     print(f"  {C.GRN}✓{C.RST} {C.DIM}yt-dlp {ytdlp_ver} · ffmpeg found{C.RST}")
+    if COOKIE_BROWSER:
+        print(f"  {C.GRN}✓{C.RST} {C.DIM}cookies: {COOKIE_BROWSER}{C.RST}")
+    else:
+        print(f"  {C.YLW}!{C.RST} {C.DIM}no browser cookies (downloads may fail with bot detection){C.RST}")
 
 
 def _subprocess_kwargs():
@@ -736,6 +771,7 @@ def run_download(url, audio_format, output_template, dir_mode, lyrics_mode, stat
     crop_filter = r"crop=min(iw\\,ih):min(iw\\,ih)"
     cmd = [
         "yt-dlp",
+        *_cookie_flags(),
         "--ignore-errors",
         "--extractor-args", "youtube:player_client=android_vr,web",
         "--parse-metadata", "%(playlist_channel|playlist_uploader|channel|uploader|artist)s:(?P<folder_artist>[^,&，]+)",
@@ -1076,7 +1112,7 @@ def fetch_artist_discography(url):
     if not artist_name or artist_name.strip().lower().rstrip(".") in bad_titles:
         try:
             fallback = subprocess.run(
-                ["yt-dlp", "--print", "uploader", "--playlist-items", "1", url],
+                ["yt-dlp", *_cookie_flags(), "--print", "uploader", "--playlist-items", "1", url],
                 capture_output=True, text=True, timeout=30
             )
             fb_name = fallback.stdout.strip().split("\n")[0] if fallback.stdout.strip() else None
@@ -1495,12 +1531,40 @@ def run_organize_mode(verbose=False):
 
 # ── main ────────────────────────────────────
 def main():
+    global COOKIE_BROWSER
     arg_url = None
     verbose = False
+    no_cookies = False
+    explicit_browser = None
+    
+    # pre-scan for --browser and --no-cookies before other arg handling
+    argv = sys.argv[1:]
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--browser" and i + 1 < len(argv):
+            explicit_browser = argv[i + 1]
+            i += 2
+        elif argv[i].startswith("--browser="):
+            explicit_browser = argv[i].split("=", 1)[1]
+            i += 1
+        elif argv[i] == "--no-cookies":
+            no_cookies = True
+            i += 1
+        else:
+            i += 1
+    
+    # resolve cookie browser
+    if no_cookies:
+        COOKIE_BROWSER = None
+    elif explicit_browser:
+        COOKIE_BROWSER = explicit_browser
+    else:
+        COOKIE_BROWSER = _detect_cookie_browser()
     
     if "--sync" in sys.argv:
         verbose = "-v" in sys.argv or "--verbose" in sys.argv
         banner()
+        check_deps()
         try:
             run_sync_mode(verbose)
         except KeyboardInterrupt:
@@ -1522,12 +1586,22 @@ def main():
             reset_colors()
         return
 
+    skip_next = False
     for arg in sys.argv[1:]:
+        if skip_next:
+            skip_next = False
+            continue
         if arg in ("-h", "--help"):
-            print(f"Usage: {sys.argv[0]} [-v] [URL]")
+            print(f"Usage: {sys.argv[0]} [-v] [--browser BROWSER] [--no-cookies] [URL]")
+            print(f"  --browser BROWSER  use cookies from BROWSER (firefox, chrome, brave, etc.)")
+            print(f"  --no-cookies       don't use browser cookies (may trigger bot detection)")
             sys.exit(0)
         elif arg in ("-v", "--verbose"):
             verbose = True
+        elif arg == "--browser":
+            skip_next = True  # skip the browser name value
+        elif arg in ("--no-cookies", "--sync", "--organize") or arg.startswith("--browser="):
+            pass  # already handled above
         else:
             if arg_url is None:
                 arg_url = arg
