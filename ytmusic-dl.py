@@ -983,6 +983,8 @@ def run_download(url, audio_format, output_template, dir_mode, lyrics_mode, stat
                 
             # print errors or warnings
             if "ERROR:" in line or "WARNING:" in line:
+                if "since it does not support cookies" in line:
+                    continue
                 if last_was_progress: 
                     if verbose: print()
                     last_was_progress = False
